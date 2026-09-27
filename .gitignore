@@ -1,0 +1,17 @@
+# Android / Gradle build products
+.gradle/
+.gradle-verify-cache/
+**/build/
+**/.kotlin/
+
+# Per-machine Android SDK configuration
+**/local.properties
+
+# IDE state and local logs
+.idea/
+*.iml
+*.log
+
+# OS-generated files
+Thumbs.db
+.DS_Store

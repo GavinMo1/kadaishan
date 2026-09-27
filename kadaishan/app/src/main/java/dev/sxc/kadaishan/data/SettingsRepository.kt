@@ -1,0 +1,141 @@
+package dev.sxc.kadaishan.data
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import dev.sxc.kadaishan.model.Board
+import dev.sxc.kadaishan.model.BoardAction
+import dev.sxc.kadaishan.model.Gesture
+import dev.sxc.kadaishan.model.GestureMapping
+import dev.sxc.kadaishan.model.SortClause
+import dev.sxc.kadaishan.model.SortSpec
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+/** 唯一 settings DataStore 实例（文件名 "settings"；Preferences DataStore，架构 §2 配置清单）。 */
+private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+
+/** 设置持久化（架构 §2 配置清单 5 组 key）：手势映射 / 分板块每轮数量 / 排序 / 视频标记停留 / 永久删除解锁标志。
+ *  标记与分组不落盘；边界校验见伴生对象纯函数。 */
+class SettingsRepository(context: Context) {
+
+    private val dataStore: DataStore<Preferences> = context.settingsDataStore
+
+    /** 手势映射；坏数据（键缺失/动作或手势非法/非双射/含 DOWN）一律回默认映射。 */
+    val gestureMapping: Flow<GestureMapping> = dataStore.data.map { prefs ->
+        parseGestureMapping(prefs[KEY_GESTURE])
+    }
+
+    /** 分板块每轮数量；缺省 PHOTO/SCREENSHOT/SAVED=20、VIDEO=10（PRD §4.4）。 */
+    val perBoardRoundSize: Flow<Map<Board, Int>> = dataStore.data.map { prefs ->
+        Board.entries.associateWith { board -> prefs[roundSizeKey(board)] ?: defaultRoundSize(board) }
+    }
+
+    /** 排序策略；缺省/坏数据回 SortSpec.Random。 */
+    val sortStrategy: Flow<SortSpec> = dataStore.data.map { prefs ->
+        parseSortStrategy(prefs[KEY_SORT])
+    }
+
+    /** 视频标记停留毫秒；缺省 800（PRD §4.2）。 */
+    val videoDwellMs: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[KEY_DWELL_MS] ?: DEFAULT_DWELL_MS
+    }
+
+    /** 「立即永久删除」解锁标志（找回演练通过才置 true；PRD §4.6）。缺省 false。 */
+    val permanentDeleteUnlocked: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_PERM_UNLOCKED] ?: false
+    }
+
+    suspend fun setGestureMapping(m: GestureMapping) {
+        dataStore.edit { it[KEY_GESTURE] = encodeGestureMapping(m) }
+    }
+
+    suspend fun setRoundSize(board: Board, size: Int) {
+        val checked = requireRoundSize(size)
+        dataStore.edit { it[roundSizeKey(board)] = checked }
+    }
+
+    suspend fun setSortStrategy(s: SortSpec) {
+        dataStore.edit { it[KEY_SORT] = encodeSortStrategy(s) }
+    }
+
+    suspend fun setVideoDwellMs(ms: Int) {
+        val checked = requireDwellMs(ms)
+        dataStore.edit { it[KEY_DWELL_MS] = checked }
+    }
+
+    suspend fun setPermanentDeleteUnlocked(v: Boolean) {
+        dataStore.edit { it[KEY_PERM_UNLOCKED] = v }
+    }
+
+    companion object {
+        const val DEFAULT_DWELL_MS = 800
+
+        private val KEY_GESTURE = stringSetPreferencesKey("gesture_mapping")
+        private val KEY_SORT = stringPreferencesKey("sort_strategy")
+        private val KEY_DWELL_MS = intPreferencesKey("video_dwell_ms")
+        private val KEY_PERM_UNLOCKED = booleanPreferencesKey("permanent_delete_unlocked")
+        private fun roundSizeKey(board: Board): Preferences.Key<Int> =
+            intPreferencesKey("round_size_${board.name}")
+
+        /** 每轮数量缺省（PRD §4.4）：图片三板块 20 / 视频 10。 */
+        fun defaultRoundSize(board: Board): Int = if (board == Board.VIDEO) 10 else 20
+
+        /** 四板块缺省每轮数量快照（UI collectAsState 初值用）。 */
+        fun defaultRoundSizes(): Map<Board, Int> =
+            Board.entries.associateWith { defaultRoundSize(it) }
+
+        /** 每轮数量边界（1..300）；越界抛 IllegalArgumentException。 */
+        fun requireRoundSize(size: Int): Int {
+            require(size in 1..300) { "每轮数量须在 1..300：$size" }
+            return size
+        }
+
+        /** 视频标记停留边界（0..2000ms）；越界抛 IllegalArgumentException。 */
+        fun requireDwellMs(ms: Int): Int {
+            require(ms in 0..2000) { "视频标记停留须在 0..2000ms：$ms" }
+            return ms
+        }
+
+        /** 持久化编码："LEFT=MARK_DELETE" 形式 stringSet。 */
+        fun encodeGestureMapping(m: GestureMapping): Set<String> =
+            m.map.map { (gesture, action) -> "${gesture.name}=${action.name}" }.toSet()
+
+        /** 读取解析：坏数据（null / 非法枚举 / 非双射 / 缺手势 / 含 DOWN）→ GestureMapping.default()。 */
+        fun parseGestureMapping(raw: Set<String>?): GestureMapping {
+            if (raw.isNullOrEmpty()) return GestureMapping.default()
+            return try {
+                val map = raw.associate { entry ->
+                    val parts = entry.split("=", limit = 2)
+                    require(parts.size == 2) { "坏数据：$entry" }
+                    Gesture.valueOf(parts[0]) to BoardAction.valueOf(parts[1])
+                }
+                GestureMapping(map) // init 校验不通过（冲突/缺手势/含 DOWN）抛 IAE → 兜底
+            } catch (e: IllegalArgumentException) {
+                GestureMapping.default()
+            }
+        }
+
+        /** 排序持久化编码："RANDOM" / SortClause 名。 */
+        fun encodeSortStrategy(s: SortSpec): String = when (s) {
+            SortSpec.Random -> "RANDOM"
+            is SortSpec.SqlOrder -> s.clause.name
+        }
+
+        /** 排序读取解析；缺省/坏数据 → SortSpec.Random。 */
+        fun parseSortStrategy(raw: String?): SortSpec {
+            if (raw == null || raw == "RANDOM") return SortSpec.Random
+            return try {
+                SortSpec.SqlOrder(SortClause.valueOf(raw))
+            } catch (e: IllegalArgumentException) {
+                SortSpec.Random
+            }
+        }
+    }
+}
