@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-28T00:00:00Z",
+  "title": "Design System: kadaishan（卡待删）",
+  "extensions": {
+    "colorMeta": {
+      "canvas": { "role": "neutral", "displayName": "纸白 Paper White", "canonical": "#FFFFFF" },
+      "parchment": { "role": "neutral", "displayName": "米白 Parchment", "canonical": "#F5F5F7", "tonalRamp": ["#2A2A2E", "#4E4E54", "#6F6F76", "#94949B", "#B9B9C0", "#D9D9DE", "#ECECF0", "#FAFAFC"] },
+      "ink": { "role": "neutral", "displayName": "墨 Ink", "canonical": "#1D1D1F", "tonalRamp": ["#0A0A0B", "#26262A", "#3E3E44", "#5A5A60", "#7A7A7E", "#A6A6AA", "#D1D1D4", "#F0F0F2"] },
+      "action-blue": { "role": "primary", "displayName": "Action Blue", "canonical": "#0066CC", "tonalRamp": ["#002B4F", "#00437D", "#0066CC", "#1A7AE0", "#4D9BEA", "#85BDF2", "#B9D9F8", "#E3F0FC"] },
+      "danger": { "role": "error", "displayName": "危险红 Danger Red", "canonical": "#D70015", "tonalRamp": ["#4A0007", "#8A0010", "#B30012", "#D70015", "#E8333F", "#F0666F", "#F7A0A6", "#FDECEA"] },
+      "accent-on-dark": { "role": "primary", "displayName": "深底蓝 Blue on Dark", "canonical": "#2997FF", "tonalRamp": ["#00305F", "#0058AE", "#2997FF", "#4FA8FF", "#7CBFFF", "#AAD6FF", "#CFE8FF", "#EAF5FF"] },
+      "hairline": { "role": "neutral", "displayName": "Hairline 灰", "canonical": "#E0E0E0" },
+      "divider-soft": { "role": "neutral", "displayName": "软分隔灰", "canonical": "#F0F0F0" },
+      "chrome-surface": { "role": "neutral", "displayName": "悬浮 Chrome 白（80%）", "canonical": "rgba(255,255,255,0.80)" },
+      "chip-on-media": { "role": "neutral", "displayName": "黑透圆牌（D2D2D7 @64%）", "canonical": "rgba(210,210,215,0.64)" },
+      "surface-black": { "role": "neutral", "displayName": "视频板纯黑面", "canonical": "#000000" },
+      "pearl": { "role": "neutral", "displayName": "珍珠白", "canonical": "#FAFAFC" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline（主张句）", "purpose": "权限引导/轮末主张句；全 App 无 display 档。" },
+      "title": { "displayName": "Title（面板标题）", "purpose": "面板/抽屉标题、卡片副标题；M3 title* 全系 600 + -0.011em。" },
+      "body": { "displayName": "Body（iOS body 17sp）", "purpose": "正文主档，17sp/25sp 行高/-0.022em。" },
+      "body-medium": { "displayName": "Body-medium（说明）", "purpose": "说明文字、次级键与圆片标签、行间辅助。" },
+      "label": { "displayName": "Label（最小档）", "purpose": "12sp/-0.01em；分组标题用其 13sp 近邻。" }
+    },
+    "shadows": [
+      { "name": "product-shadow", "value": "0 12px 32px rgba(0,0,0,0.22)", "purpose": "影像唯一投影（Compose elevation 15dp、ambient/spot 各 0.22）；只允许出现在照片/影像卡上，控件与容器零投影。" }
+    ],
+    "motion": [
+      { "name": "spatial", "value": "spring(dampingRatio=0.9, stiffness=400)", "purpose": "空间位移（卡片进出/选中片滑动）：带 10% 活性的临界阻尼。CSS 近似 cubic-bezier(0.22,1,0.36,1)。" },
+      { "name": "settle", "value": "spring(dampingRatio=1.0, stiffness=1500)", "purpose": "状态过渡（chrome 显隐/跟手回弹/分段滑片）：无过冲的干脆到位。CSS 近似 cubic-bezier(0.16,1,0.3,1)。" },
+      { "name": "press-scale", "value": "scale(0.95) 150ms settle", "purpose": "全部交互件的按压微交互（ghost 圆片 0.96）；无 ripple。" },
+      { "name": "reduced-motion", "value": "snap()（直切）", "purpose": "系统动画时长缩放为 0 时，作者化动效全部降级为直切。" },
+      { "name": "haptic-tick", "value": "GESTURE_TICK", "purpose": "滑动判定达成（跳过/翻页）。" },
+      { "name": "haptic-confirm", "value": "CONFIRM", "purpose": "正向确认（标记删除/确认提交/勾选）。" },
+      { "name": "haptic-reject", "value": "REJECT", "purpose": "逆向回退（撤回/取消标记）。" },
+      { "name": "haptic-tap", "value": "KEYBOARD_TAP", "purpose": "控件点按（页签/开关）。" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Pill Button",
+      "kind": "button",
+      "refersTo": "button-pill",
+      "description": "药丸主键：Action Blue 底 + 白字 17sp，内距 22×11dp，按压 scale 0.95。",
+      "html": "<button class=\"ds-btn-primary\">移入回收站 12 项</button>",
+      "css": ".ds-btn-primary { background: #0066CC; color: #FFFFFF; border: none; border-radius: 9999px; padding: 11px 22px; font-size: 17px; font-weight: 400; letter-spacing: -0.022em; min-height: 48px; transition: transform 0.25s cubic-bezier(0.16,1,0.3,1), background 0.2s; } .ds-btn-primary:hover { background: #0071E3; } .ds-btn-primary:active { transform: scale(0.95); } .ds-btn-primary:disabled { background: rgba(0,102,204,0.35); }"
+    },
+    {
+      "name": "Danger Pill Button",
+      "kind": "button",
+      "refersTo": "button-pill-danger",
+      "description": "危险变体：danger 红底白字（对比 5.4:1），只用于永久删除类破坏性主操作。",
+      "html": "<button class=\"ds-btn-danger\">永久删除 12 项 · 不可恢复</button>",
+      "css": ".ds-btn-danger { background: #D70015; color: #FFFFFF; border: none; border-radius: 9999px; padding: 11px 22px; font-size: 17px; letter-spacing: -0.022em; min-height: 48px; transition: transform 0.25s cubic-bezier(0.16,1,0.3,1); } .ds-btn-danger:hover { background: #B30012; } .ds-btn-danger:active { transform: scale(0.95); } .ds-btn-danger:disabled { background: rgba(215,0,21,0.35); }"
+    },
+    {
+      "name": "Pearl Secondary Button",
+      "kind": "button",
+      "refersTo": "button-pearl",
+      "description": "浅底次级键：pearl 底 + 1.5dp 软环 + 次墨字 14sp，11dp 圆角。",
+      "html": "<button class=\"ds-btn-pearl\">开始下一轮</button>",
+      "css": ".ds-btn-pearl { background: #FAFAFC; color: #333333; border: 1.5px solid #F0F0F0; border-radius: 11px; padding: 8px 14px; font-size: 14px; letter-spacing: -0.016em; min-height: 48px; transition: transform 0.25s cubic-bezier(0.16,1,0.3,1); } .ds-btn-pearl:active { transform: scale(0.95); } .ds-btn-pearl:disabled { color: rgba(122,122,122,0.5); }"
+    },
+    {
+      "name": "On-Media Ghost Chip",
+      "kind": "chip",
+      "refersTo": "chip-on-media",
+      "description": "照片影像面上的半透圆牌：D2D2D7 @64% 底 + 墨字，8dp 圆角，影像透出。",
+      "html": "<button class=\"ds-chip-media\">信息</button> <button class=\"ds-chip-media\">撤回</button>",
+      "css": ".ds-chip-media { background: rgba(210,210,215,0.64); color: #1D1D1F; border: none; border-radius: 8px; padding: 6px 14px; font-size: 14px; letter-spacing: -0.016em; min-height: 48px; transition: transform 0.25s cubic-bezier(0.16,1,0.3,1); } .ds-chip-media:active { transform: scale(0.96); } .ds-chip-media:disabled { color: rgba(29,29,31,0.4); }"
+    },
+    {
+      "name": "Segmented Tabs",
+      "kind": "nav",
+      "refersTo": "segmented-tabs",
+      "description": "iOS 分段页签：软灰轨 + 纯白选中滑片（settle 弹簧滑动），选中 600/未选 400。",
+      "html": "<div class=\"ds-segtabs\"><div class=\"ds-segtabs-pill\"></div><span class=\"ds-segtab ds-segtab-on\">照片</span><span class=\"ds-segtab\">视频</span></div>",
+      "css": ".ds-segtabs { position: relative; display: inline-flex; background: #F0F0F0; border-radius: 8px; padding: 3px; } .ds-segtabs-pill { position: absolute; left: 3px; top: 3px; width: 88px; height: 30px; background: #FFFFFF; border-radius: 8px; transition: transform 0.3s cubic-bezier(0.16,1,0.3,1); } .ds-segtab { position: relative; width: 88px; height: 30px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; letter-spacing: -0.016em; color: #333333; cursor: pointer; } .ds-segtab-on { color: #1D1D1F; font-weight: 600; } .ds-segtab:hover { color: #1D1D1F; }"
+    },
+    {
+      "name": "Group Card",
+      "kind": "card",
+      "refersTo": "group-card",
+      "description": "iOS 内嵌分组容器：米白底 18dp 圆角，零投影零描边，行内自管分隔线。",
+      "html": "<div class=\"ds-group\"><div class=\"ds-row\"><span class=\"ds-row-label\">排序</span><span class=\"ds-row-value\">随机</span></div><div class=\"ds-divider\"></div><div class=\"ds-row\"><span class=\"ds-row-label\">最早优先</span><span class=\"ds-row-check\">✓</span></div></div>",
+      "css": ".ds-group { background: #F5F5F7; border-radius: 18px; overflow: hidden; } .ds-row { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 0 16px; font-size: 17px; letter-spacing: -0.022em; color: #1D1D1F; cursor: pointer; } .ds-row:hover { background: #EDEDF0; } .ds-row-value { color: #0066CC; } .ds-row-check { color: #0066CC; } .ds-divider { height: 1px; background: #F0F0F0; margin-left: 16px; }"
+    },
+    {
+      "name": "Circle Check",
+      "kind": "custom",
+      "refersTo": "circle-check",
+      "description": "圆环勾选（iOS 多选）：未选灰环 → 选中 Action Blue 实底 + 白勾。",
+      "html": "<span class=\"ds-check\"></span> <span class=\"ds-check ds-check-on\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\"><path d=\"M9.55 17.6 4.4 12.45l1.42-1.42 3.73 3.73 8.63-8.63 1.42 1.42z\" fill=\"#FFFFFF\"/></svg></span>",
+      "css": ".ds-check { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid #C7C7CC; background: transparent; } .ds-check-on { border: none; background: #0066CC; }"
+    },
+    {
+      "name": "Nav Title Bar",
+      "kind": "nav",
+      "refersTo": "nav-title-bar",
+      "description": "推入子页导航：‹ 返回（蓝）左置 48dp 触达、标题 17sp/600 居中、透明底。",
+      "html": "<div class=\"ds-navbar\"><button class=\"ds-back\">‹ 返回</button><span class=\"ds-navtitle\">设置</span></div>",
+      "css": ".ds-navbar { position: relative; display: flex; align-items: center; height: 48px; } .ds-back { background: none; border: none; color: #0066CC; font-size: 17px; min-width: 48px; min-height: 48px; cursor: pointer; border-radius: 8px; } .ds-back:hover { opacity: 0.7; } .ds-navtitle { position: absolute; left: 0; right: 0; text-align: center; color: #1D1D1F; font-size: 17px; font-weight: 600; pointer-events: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "安静的画廊（The Quiet Gallery）",
+    "overview": "照片占据白画布的中心，界面元素全部退后。整个 App 是一间日光灯下的画廊：纯白平铺的墙面，照片是唯一被\"打光\"的展品（唯一允许投影的元素），一切控件——药丸键、分段页签、圆环勾选、分组列表——都以低对比、零高度的方式贴墙存在。用户单手滑动整理相册，每次判定都有触觉回执与弹簧动效；chrome（板块栏、动作圆片）悬浮半透，干活时自动退场，内容从不为 chrome 让位。这是继承自代码确立的 Daylight 世界：Apple 语汇（Action Blue 唯一强调、圆角四档制、hairline 分隔、弹簧动效、Haptics 触觉回执）落在 Android Jetpack Compose Material3 骨架上，但视觉上不给 M3 基线留任何泄漏面。始终浅色（不跟随系统深色），唯一例外是视频板：全屏黑底沉浸播放，控件转黑透圆片系。",
+    "keyCharacteristics": [
+      "纸白画布 + 米白分组容器，两层浅面承载全部信息层级；禁装饰渐变",
+      "Action Blue #0066CC 是唯一\"可点\"信号色；danger 红只承担破坏性/错误语义",
+      "圆角四档制 5/8/11/18dp + pill，无中间档",
+      "阴影只给影像（productShadow 一款），控件与卡片零投影零 tonal elevation",
+      "iOS 弹簧动效两根曲线（spatial / settle）+ 触觉回执四类（tick / confirm / reject / tap）；系统关动效时降级直切",
+      "内容全幅、chrome 悬浮半透覆盖，显隐不引起内容重排"
+    ],
+    "rules": [
+      { "name": "The One Blue Rule", "body": "Action Blue 承担一切可点信号；一个屏幕上的蓝色面积以文字与小控件为限。它越稀少，\"能点\"的信号越清楚。次级强调不引入第二支彩色。", "section": "colors" },
+      { "name": "The Photograph Casts the Only Shadow", "body": "投影是影像的专属属性（productShadow，rgba(0,0,0,0.22)，仅照片卡）。按钮、卡片、文字、chrome 一律零投影。深度由 hairline 与米白分层表达。", "section": "colors" },
+      { "name": "The Two-Weight Rule", "body": "字重只有 400 与 600。M3 默认的 500 档已在 AppTheme 全系归位；新增界面不得引入中间字重。", "section": "typography" },
+      { "name": "The Zero-Height Rule", "body": "卡片一律 hairlineBorder（1px hairline）或米白分层，不用阴影；ModalBottomSheet tonalElevation = 0。若一个表面看起来\"浮起来了\"，先检查它是不是影像——不是就去掉阴影。", "section": "elevation" },
+      { "name": "The Four-Step Corner Rule", "body": "新表面的圆角只能取 5/8/11/18 或 pill。发明第 9dp、第 14dp 都是在破坏档位制。", "section": "shapes" }
+    ],
+    "dos": [
+      "Do 全部色值/圆角/弹簧引用 Daylight 单一来源；AppTheme 与新界面只引用，不写裸 hex。",
+      "Do 给每个状态改变的操作配触觉回执与弹簧动效（spatial 位移 / settle 状态过渡）；尊重系统\"移除动画\"开关降级直切。",
+      "Do chrome 悬浮于内容之上（半透白 @80% + hairline），让内容保持全幅；显隐用 slide+fade，不重排布局。",
+      "Do 危险动作用红色药丸 + 系统二次确认，结果一律三态可追（已执行/未执行/结果未知）。",
+      "Do 保证每个终态有出口（\"查看结算 / 开始下一轮\"双按钮），不留零按钮死局。"
+    ],
+    "donts": [
+      "Don't 给影像以外的任何元素加阴影，或引入 tonal elevation / 渐变 / 第二支强调色。",
+      "Don't 使用 5/8/11/18/pill 之外的圆角，或 400/600 之外的字重。",
+      "Don't 让 chrome 占据布局位、或让内容为 chrome 让位。",
+      "Don't 在浅媒体面上放不透明控件牌——媒体面控件一律半透（黑透圆牌 / 黑 @40% 圆片），保证影像透出。",
+      "Don't 把 danger 红用于非破坏性语义，或把 Action Blue 用于不可点元素。"
+    ]
+  }
+}

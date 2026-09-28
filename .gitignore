@@ -1,17 +1,15 @@
-# Android / Gradle build products
+# 机器本地（每台自写）
+kadaishan/local.properties
+
+# 构建产物与状态
+kadaishan/build/
+kadaishan/.gradle/
+build/
 .gradle/
-.gradle-verify-cache/
-**/build/
-**/.kotlin/
 
-# Per-machine Android SDK configuration
-**/local.properties
+# 临时
+.apkchk/
+.dld/
 
-# IDE state and local logs
-.idea/
-*.iml
-*.log
-
-# OS-generated files
-Thumbs.db
-.DS_Store
+# Claude 本地覆盖件（skill 与 hooks 入库，local 不入库）
+.claude/settings.local.json
