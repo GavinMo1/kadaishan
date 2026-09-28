@@ -32,7 +32,9 @@ import kotlin.random.Random
 //    SHOW_INFO → infoOpen 浮层（不消耗，关闭后回到当前卡）；下滑（DOWN）不绑定 → 无动作；
 //  · 撤回：session.undo()（false = 栈空置灰），连续撤回拨回本轮开头（undoDepth = 置灰判据镜像）；
 //  · 池尽判据：session.current == null && !session.roundEnded()；
-//  · 加载失败/被外部删除 → advance() 自动跳过不崩溃；换排序 → 新 BoardSession 重建。
+//  · 加载失败/被外部删除 → advance() 自动跳过不崩溃；
+//  · 轮次复用（M12）：startNextRound 跨轮沿用同一 BoardSession（startNewRound 不重建）——
+//    跳过项会话级出池、随机序不重洗；重建仅限 每轮设置变更（M11 热生效，轮初读取）/ 池尽重扫。
 // main 单写者（架构 §2 并发约定）；本类不持久化（进程存活期；标记只存内存）。
 
 class PhotoCardViewModel(
@@ -58,6 +60,10 @@ class PhotoCardViewModel(
     var markedCount by mutableStateOf(0)
         private set
 
+    /** 本轮已看过数（= session 已消耗数快照；进度文案用）。 */
+    var seenCount by mutableStateOf(0)
+        private set
+
     /** 撤回按钮可用（false 置灰）；undoDepth = 会话撤回栈深度镜像。 */
     var undoAvailable by mutableStateOf(false)
         private set
@@ -75,27 +81,38 @@ class PhotoCardViewModel(
 
     private var session: BoardSession? = null
     private var sort: SortSpec = SortSpec.Random
+    private var mergedImages = true
     private var undoDepth = 0
 
     init {
         viewModelScope.launch {
             // 先取落盘配置再建会话（每轮数量 / 排序）
-            sort = settings.sortStrategy.first()
-            currentRoundSize = settings.perBoardRoundSize.first()[board]
-                ?: SettingsRepository.defaultRoundSize(board)
+            applyRoundSettings()
             rebuild()
-            // 换排序 → 新 BoardSession 重建
-            settings.sortStrategy.collect { s ->
-                if (s != sort) {
-                    sort = s
-                    rebuild()
-                }
+            // 不在此处 collect 设置：轮内改动 = 下一轮生效（契约 4），轮内 rebuild 会丢标记；
+            // 生效点收敛在 startNextRound → applyRoundSettings（每轮开始重读，M11 热生效）
+        }
+        // 详情加载：失效/被外部删除 → 自动跳过不崩溃；顺带行预取未来 5 项（切图零等待，解码预热在 Screen 侧）
+        viewModelScope.launch {
+            snapshotFlow { currentId }.collect { id ->
+                loadItem(id)
+                session?.peekUpcoming(6)?.forEach { upcoming -> if (upcoming != id) loadItem(upcoming) }
             }
         }
-        // 详情加载：失效/被外部删除 → 自动跳过不崩溃
-        viewModelScope.launch {
-            snapshotFlow { currentId }.collect { id -> loadItem(id) }
-        }
+    }
+
+    /** 每轮开始时重读落盘设置（M11：改每轮数量/排序无需杀进程，下一轮即生效）。
+     *  返回 true = 排序或每轮数量已变更 → 必须换新会话（BoardSession 构造定序且 roundSize 不可变）。 */
+    private suspend fun applyRoundSettings(): Boolean {
+        val newSort = settings.sortStrategy.first()
+        val newSize = settings.perBoardRoundSize.first()[board]
+            ?: SettingsRepository.defaultRoundSize(board)
+        val newMerged = settings.imageBoardsMerged.first()
+        val changed = newSort != sort || newSize != currentRoundSize || newMerged != mergedImages
+        sort = newSort
+        currentRoundSize = newSize
+        mergedImages = newMerged
+        return changed
     }
 
     // —— 手势动作（GestureMapping 解析结果；Screen 只报动作不判方向）——
@@ -147,18 +164,40 @@ class PhotoCardViewModel(
 
     // —— 轮次（PRD §4.4）——
 
-    /** 轮末态「开始下一轮」：startNewRound + 重建会话（新排序快照 / Random 重洗）。 */
+    /** 轮末/池尽「开始下一轮」（结算页 onNextRound 与池尽态按钮共用）：
+     *  · 正常轮末：startNewRound() 跨轮复用同一 BoardSession（M12）——指针与排序快照不动，
+     *    跳过项/已展示项结构性不重入下轮、随机序不重洗；仅当 每轮数量或排序已改（M11 下一轮生效）/
+     *    池子正好耗尽（否则新轮开局即池尽）才重建；
+     *  · 池尽（roundEnded=false，order 已穷尽）：池子重扫 = 合法重建口。 */
     fun startNextRound() {
         val s = session ?: return
-        if (!s.roundEnded()) return
-        s.startNewRound() // 合同字面：旧会话先开新轮（标记与撤回栈复位）
-        viewModelScope.launch { rebuild() }
+        if (!ready) return
+        ready = false // 过渡期按加载态渲染，盖住轮末/池尽残影
+        viewModelScope.launch {
+            if (s.roundEnded()) {
+                s.startNewRound() // 合同字面：旧会话先开新轮（标记与撤回栈复位，指针不回拨）
+                undoDepth = 0 // 镜像复位：会话撤回栈已随 startNewRound 清空（否则置灰判据永久失真）
+                sync() // 过渡期快照一致：标记/轮计数/置灰已随新轮复位，不等 settings 读完
+                if (applyRoundSettings() || s.current == null) {
+                    rebuild() // 设置已变更 / 池子恰好走完 → 合法重建
+                } else {
+                    refresh()
+                    ready = true
+                }
+            } else {
+                rebuild() // 池尽态「开始下一轮」= 池子重扫
+            }
+        }
     }
 
     /** 轮末结算快照入口；复制后交给结算页，不能把会话的活集合泄露出去。 */
     fun markedSnapshot(): List<MediaKey> = session?.markedIds?.toList().orEmpty()
 
-    /** 构造/重建会话（初始进入 / 换排序 / 开始下一轮共用）：
+    /** 解码预热口（Screen 侧）：未来 count 项中已加载行的 uri（行预取见 init collector）。 */
+    fun upcomingUris(count: Int) =
+        session?.peekUpcoming(count + 1)?.mapNotNull { items[it]?.uri }.orEmpty()
+
+    /** 构造/重建会话（初始进入 / 每轮设置变更 / 池尽重扫 —— 无「每轮重建」路径）：
      *  idOrder = source.ids(query) 按 sortStrategy 定序（Random → fisherYates），
      *  currentId/undoDepth 复位；空池 → 空态（currentId=null, roundEnded=false）。 */
     private suspend fun rebuild() {
@@ -178,6 +217,8 @@ class PhotoCardViewModel(
         matchTrashed = MediaStore.MATCH_EXCLUDE,
         // visibility 为数据层预留位（MediaStoreDataSource 不消费）；板块内容按权限范围由查询结果天然决定
         visibility = VisibleScope.FULL,
+        // 统一图片板块（PRD §3.1 设置项）：仅「照片」板吸收全部图片；分板模式维持分类过滤
+        mergeImages = mergedImages && board == Board.PHOTO,
     )
 
     // —— 详情加载（失败/被外部删除 → 自动跳过不崩溃）——
@@ -217,6 +258,7 @@ class PhotoCardViewModel(
     private fun sync() {
         val s = session
         markedCount = s?.markedCount ?: 0
+        seenCount = s?.consumed ?: 0
         roundEnded = s?.roundEnded() ?: false
         undoAvailable = undoDepth > 0
     }

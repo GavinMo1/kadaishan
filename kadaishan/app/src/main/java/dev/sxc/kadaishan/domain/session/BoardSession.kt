@@ -59,6 +59,13 @@ class BoardSession(idOrder: List<MediaKey>, val roundSize: Int) {
     val markedIds: Set<MediaKey>
         get() = marks
 
+    /** 本轮已消耗数（= pointer - roundStart；进度文案「已看过 N 项」，undo 时回拨）。 */
+    val consumed: Int
+        get() = pointer - roundStart
+
+    /** 预取窗（纯窥视，不改状态）：从当前指针起的未来 n 项（含当前项；轮末时 = 下轮开局的项）。 */
+    fun peekUpcoming(n: Int): List<MediaKey> = order.drop(pointer).take(n)
+
     /** 无标记推进（浏览即过）。轮末 / 池尽 = 无操作。 */
     fun advance() {
         if (exhausted()) return

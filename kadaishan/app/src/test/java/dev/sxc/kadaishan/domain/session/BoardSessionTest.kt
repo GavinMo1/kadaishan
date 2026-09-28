@@ -276,4 +276,14 @@ class BoardSessionTest {
         s.advance() // 池尽无操作
         assertNull(s.current)
     }
+
+    @Test
+    fun `peekUpcoming窥视未来项含当前且不改状态`() {
+        val s = BoardSession(ids(4), 2)
+
+        assertEquals(ids(3), s.peekUpcoming(3))
+        s.mark(s.current!!) // 消耗 1 项
+        assertEquals(listOf(2L, 3L, 4L), s.peekUpcoming(3))
+        assertEquals(1, s.consumed) // 窥视不动指针
+    }
 }

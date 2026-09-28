@@ -82,6 +82,10 @@ class VideoCardViewModel(
     var roundEnded by mutableStateOf(false)
         private set
 
+    /** 播放缓冲中（STATE_BUFFERING；海报静止与暂停的可区分态）。 */
+    var buffering by mutableStateOf(false)
+        private set
+
     /** 本轮条数（会话 roundSize 快照；轮末态「本轮已处理 N 项」）。 */
     var currentRoundSize by mutableStateOf(SettingsRepository.defaultRoundSize(Board.VIDEO))
         private set
@@ -100,6 +104,17 @@ class VideoCardViewModel(
 
     /** 声音开关（PRD §4.2 默认静音；右上角小喇叭切换）。 */
     var muted by mutableStateOf(true)
+        private set
+
+    /** 播放中（false = 暂停/未起播 → UI 中央播放指示；缓冲态由 buffering 单列）。 */
+    var paused by mutableStateOf(true)
+        private set
+
+    /** 播放进度（500ms 轮询 → 底部进度条；scrub 期间 UI 用本地 fraction 展示，不回写）。 */
+    var positionMs by mutableStateOf(0L)
+        private set
+
+    var durationMs by mutableStateOf(0L)
         private set
 
     /** 当前片源视频尺寸（渲染层算裁切变换；0 = 未知/未就绪）。 */
@@ -135,18 +150,12 @@ class VideoCardViewModel(
 
     init {
         viewModelScope.launch {
-            // 先取落盘配置再建会话（每轮数量 / 排序）
+            // 先取落盘配置再建会话（每轮数量 / 排序）。
+            // M11（拍板）：设置变更 = 下一轮生效——startNextRound 时重读对比，轮内不 rebuild、不清标记。
             sort = settings.sortStrategy.first()
             currentRoundSize = settings.perBoardRoundSize.first()[Board.VIDEO]
                 ?: SettingsRepository.defaultRoundSize(Board.VIDEO)
             rebuild()
-            // 换排序 → 新 BoardSession 重建
-            settings.sortStrategy.collect { s ->
-                if (s != sort) {
-                    sort = s
-                    rebuild()
-                }
-            }
         }
         viewModelScope.launch {
             settings.videoDwellMs.collect { dwellMs = it }
@@ -191,12 +200,27 @@ class VideoCardViewModel(
         p.playWhenReady = !p.playWhenReady
     }
 
+    /** 进度条拖动收口：fraction ∈ [0,1)，上探 duration-1ms 防误触播完自动跳卡。 */
+    fun seekTo(fraction: Float) {
+        val p = player ?: return
+        val d = p.duration
+        if (d <= 0) return
+        p.seekTo((fraction.coerceIn(0f, 0.999f) * d).toLong())
+    }
+
     private fun ensurePlayer(): ExoPlayer? {
         player?.let { return it }
         val p = ExoPlayer.Builder(appContext).build()
         p.volume = if (muted) 0f else 1f
-        p.repeatMode = Player.REPEAT_MODE_ALL // 单条循环（播完不冻结，滑动仍由手势推进）
+        // PRD §4.2 口径：播完自动跳下一条（不循环）；回看走「下滑 = 上一个」。
         p.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_ENDED && visible && currentId != null) {
+                    next() // 播完推进（与上滑同语义；到轮末/池尽即止）
+                }
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 preparedUri = null // 失效源强制下次重装；坏文件 → 既有 load-failure 自动前进
                 if (visible && currentId != null && player?.playbackState == Player.STATE_IDLE) {
@@ -208,9 +232,25 @@ class VideoCardViewModel(
                 videoWidth = size.width
                 videoHeight = size.height
             }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                paused = !isPlaying
+            }
         })
         surface?.let { p.setVideoTextureView(it) }
         player = p
+        // 进度轮询（单实例一次；500ms 粒度够 UI 细线用，scrub 期间 UI 本地插值不闪跳）
+        viewModelScope.launch {
+            while (true) {
+                val cur = player
+                if (cur != null && visible) {
+                    positionMs = cur.currentPosition.coerceAtLeast(0L)
+                    val d = cur.duration
+                    if (d > 0) durationMs = d
+                }
+                delay(500)
+            }
+        }
         return p
     }
 
@@ -223,6 +263,10 @@ class VideoCardViewModel(
             preparedUri = item.uri
             videoWidth = 0
             videoHeight = 0
+            positionMs = 0
+            durationMs = 0
+        } else if (p.playbackState == Player.STATE_ENDED) {
+            p.seekTo(0) // 播完后回看：从头重播
         }
         p.playWhenReady = true
     }
@@ -357,12 +401,33 @@ class VideoCardViewModel(
 
     // —— 轮次（PRD §4.4）——
 
-    /** 轮末态「开始下一轮」：startNewRound + visited/viewIndex 重置 + 重建 idOrder（新 BoardSession）。 */
+    /** 轮末态「开始下一轮」：同会话 startNewRound（PRD §4.4 跳过项会话级出池、随机序不重洗，不重建
+     *  BoardSession）；设置变更在此轮界生效（每轮数量/排序 = 下一轮生效）。池尽未满轮 → 重扫池子开新轮。 */
     fun startNextRound() {
-        val s = session ?: return
-        if (!s.roundEnded()) return
-        s.startNewRound() // 合同字面：旧会话先开新轮（标记与撤回栈复位）
-        viewModelScope.launch { rebuild() }
+        val s = session
+        viewModelScope.launch {
+            // 设置热生效：轮界重读，变了才走重建口（init/设置变更/池尽三口之一）
+            val newSort = settings.sortStrategy.first()
+            val newSize = settings.perBoardRoundSize.first()[Board.VIDEO]
+                ?: SettingsRepository.defaultRoundSize(Board.VIDEO)
+            if (s == null || newSort != sort || newSize != currentRoundSize || !s.roundEnded()) {
+                sort = newSort
+                currentRoundSize = newSize
+                rebuild()
+                return@launch
+            }
+            cancelDwell()
+            s.startNewRound() // 指针不回拨：新轮消费下一段，旧轮项（含跳过）不重入
+            markStack.clear()
+            visitedIds = emptyList()
+            viewIndex = 0
+            val first = s.current
+            if (first != null) {
+                s.advance()
+                visitedIds = listOf(first)
+            }
+            sync()
+        }
     }
 
     /** 轮末结算快照入口；复制以隔离 BoardSession 的活集合。 */

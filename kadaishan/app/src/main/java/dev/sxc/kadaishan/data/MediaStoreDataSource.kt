@@ -103,11 +103,13 @@ class MediaStoreDataSource(
                 val idIndex = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 // 板块内过滤（编排者裁决 2026-09-27）：图片三板逐行走 classifyFields；
                 // VIDEO 集合天然全视频（media_type=VIDEO），target=null 短路、无谓词
-                val target = when (query.board) {
-                    Board.PHOTO -> ImageCategory.CAMERA
-                    Board.SCREENSHOT -> ImageCategory.SCREENSHOT
-                    Board.SAVED -> ImageCategory.SAVED
-                    Board.VIDEO -> null
+                val target = when {
+                    // 统一图片板块（PRD §3.1）：全部图片入池，分类规则降级为筛选器
+                    query.mergeImages -> null
+                    query.board == Board.PHOTO -> ImageCategory.CAMERA
+                    query.board == Board.SCREENSHOT -> ImageCategory.SCREENSHOT
+                    query.board == Board.SAVED -> ImageCategory.SAVED
+                    else -> null
                 }
                 val pathIndex = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
                 val bucketIndex = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)

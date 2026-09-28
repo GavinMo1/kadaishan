@@ -61,6 +61,8 @@ data class MediaQuery(
     val sort: SortSpec,
     val matchTrashed: Int,
     val visibility: VisibleScope,
+    /** true = 统一图片板块：全部图片归「照片」板，分类降级为筛选器（PRD §3.1 设置项，缺省 true）。 */
+    val mergeImages: Boolean = false,
     val excludePaths: List<String> = emptyList(),
     val processedFilter: ProcessedFilter = ProcessedFilter.ALL,
 )
@@ -84,6 +86,18 @@ data class GestureMapping(val map: Map<Gesture, BoardAction>) {
         require(map.values.toSet() == setOf(BoardAction.MARK_DELETE, BoardAction.SKIP, BoardAction.SHOW_INFO)) {
             "三个动作必须与手势一一对应，不允许两个手势映射同一动作（PRD §4.1）"
         }
+    }
+
+    /**
+     * 两手势互换绑定（设置页点按 = 与当前持有目标动作的另一手势交换）。
+     * 纯函数：交换仍是双射 → 构造校验不变（冲突在构造处拒绝）。
+     */
+    fun swapped(a: Gesture, b: Gesture): GestureMapping {
+        if (a == b) return GestureMapping(map)
+        val actionA = map[a]
+        val actionB = map[b]
+        require(actionA != null && actionB != null) { "只能交换已绑定的手势：$a / $b（PRD §4.1）" }
+        return GestureMapping(map + (a to actionB) + (b to actionA))
     }
 
     companion object {

@@ -47,9 +47,14 @@ class SettingsRepository(context: Context) {
         prefs[KEY_DWELL_MS] ?: DEFAULT_DWELL_MS
     }
 
-    /** 「立即永久删除」解锁标志（找回演练通过才置 true；PRD §4.6）。缺省 false。 */
+    /** 「立即永久删除」解锁标志（PRD §4.6：2026-09-27 用户拍板默认已解锁，找回演练降为建议路径）。缺省 true。 */
     val permanentDeleteUnlocked: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_PERM_UNLOCKED] ?: false
+        prefs[KEY_PERM_UNLOCKED] ?: true
+    }
+
+    /** 图片板块模式（PRD §3.1）：true（缺省）= 全部图片统一归「照片」板；false = 拆 照片/截图/已保存 三板。 */
+    val imageBoardsMerged: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_IMAGE_BOARDS_MERGED] ?: true
     }
 
     suspend fun setGestureMapping(m: GestureMapping) {
@@ -70,6 +75,10 @@ class SettingsRepository(context: Context) {
         dataStore.edit { it[KEY_DWELL_MS] = checked }
     }
 
+    suspend fun setImageBoardsMerged(merged: Boolean) {
+        dataStore.edit { it[KEY_IMAGE_BOARDS_MERGED] = merged }
+    }
+
     suspend fun setPermanentDeleteUnlocked(v: Boolean) {
         dataStore.edit { it[KEY_PERM_UNLOCKED] = v }
     }
@@ -81,6 +90,7 @@ class SettingsRepository(context: Context) {
         private val KEY_SORT = stringPreferencesKey("sort_strategy")
         private val KEY_DWELL_MS = intPreferencesKey("video_dwell_ms")
         private val KEY_PERM_UNLOCKED = booleanPreferencesKey("permanent_delete_unlocked")
+        private val KEY_IMAGE_BOARDS_MERGED = booleanPreferencesKey("image_boards_merged")
         private fun roundSizeKey(board: Board): Preferences.Key<Int> =
             intPreferencesKey("round_size_${board.name}")
 

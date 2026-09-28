@@ -1,7 +1,6 @@
 package dev.sxc.kadaishan.data
 
 import android.content.Context
-import android.net.Uri
 import android.util.Base64
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -33,7 +32,7 @@ class PendingSettlementRepository(context: Context) {
         append(value.mode.name).append('|').append(value.batchesDone).append('|').append(value.totalBatches)
         value.snapshot.forEach { item ->
             append('\n').append(item.id).append('\t')
-            append(field(item.uri.toString())).append('\t')
+            append(field(item.uri)).append('\t')
             append(field(item.displayName)).append('\t').append(item.sizeBytes)
         }
     }
@@ -45,7 +44,7 @@ class PendingSettlementRepository(context: Context) {
         val items = lines.drop(1).map { line ->
             val parts = line.split('\t')
             require(parts.size == 4)
-            SnapItem(parts[0].toLong(), Uri.parse(unfield(parts[1])), unfield(parts[2]), parts[3].toLong())
+            SnapItem(parts[0].toLong(), unfield(parts[1]), unfield(parts[2]), parts[3].toLong())
         }
         PendingSettlement(items, DeleteMode.valueOf(head[0]), head[1].toInt(), head[2].toInt())
     } catch (_: Exception) {
