@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>卡待删 · Daylight 预览</title>
+<style>
+/* ══════════════════════════════════════════════════════════════
+   Daylight 设计系统 · 浏览器预览（token 与 ui/kit/DesignKit.kt 一一对应）
+   本页刻意单主题：预览物 = App 的浅色世界（视频板深色除外）
+   占位"照片" = CSS 色场，非真实图片；动效曲线 = spatial/settle 弹簧的 CSS 近似
+   ══════════════════════════════════════════════════════════════ */
+:root{
+  /* Daylight tokens */
+  --canvas:#FFFFFF;
+  --parchment:#F5F5F7;
+  --ink:#1D1D1F;
+  --ink-strong:#333333;
+  --ink-sub:#6E6E73;
+  --blue:#0066CC;
+  --blue-press:#0071E3;
+  --pearl:#FAFAFC;
+  --hairline:#E0E0E0;
+  --divider-soft:#F0F0F0;
+  --check-ring:#C7C7CC;
+  --chip:rgba(210,210,215,.64);
+  --chrome:rgba(255,255,255,.80);
+  --on-dark:#FFFFFF;
+  --blue-dark:#2997FF;
+  --danger:#D70015;
+  --err-bg:#FDECEA;
+  --err-ink:#8A0010;
+  /* 弹簧近似：settle = 无过冲到位；spatial = 带一点活性 */
+  --settle:cubic-bezier(.22,1,.36,1);
+  --spatial:cubic-bezier(.3,1.25,.4,1);
+  --studio:#F5F5F7;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--studio);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","MiSans","PingFang SC","Microsoft YaHei UI","Segoe UI",Roboto,sans-serif;
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;align-items:center;
+  padding:28px 16px 40px;
+}
+[hidden]{display:none!important}
+
+/* ── 页面标题 ─────────────────────────── */
+.pagehead{max-width:920px;width:100%;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.pagehead h1{font-size:20px;font-weight:600;letter-spacing:-.011em}
+.pagehead p{font-size:13px;color:var(--ink-sub);letter-spacing:-.01em}
+.stagenote{max-width:920px;width:100%;font-size:12px;color:var(--ink-sub);letter-spacing:-.008em;margin-bottom:18px}
+.stagenote b{color:var(--ink-strong);font-weight:600}
+
+/* ── 舞台：左切换栏 + 手机 ─────────────── */
+.stage{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+.rail{display:flex;flex-direction:column;gap:6px;min-width:168px}
+.rail .rail-label{font-size:12px;color:var(--ink-sub);letter-spacing:.02em;padding:0 12px;margin:6px 0 2px}
+.rail button{
+  appearance:none;border:0;background:transparent;border-radius:11px;
+  padding:11px 12px;font:inherit;font-size:15px;color:var(--ink-strong);text-align:left;cursor:pointer;
+  transition:background .18s var(--settle),color .18s var(--settle);
+}
+.rail button:hover{background:#EDEDF0}
+.rail button.on{background:var(--canvas);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.rail .tok{margin-top:14px;border-top:1px solid var(--hairline);padding:12px 12px 0;display:flex;flex-direction:column;gap:8px}
+.rail .tok .sw{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-sub);letter-spacing:-.008em}
+.rail .tok .sw i{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.06);flex:none}
+.rail .tok .row{font-size:11.5px;color:var(--ink-sub);letter-spacing:-.008em;line-height:1.5}
+
+/* ── iPhone 机身 ─────────────────────── */
+.device{
+  width:392px;flex:none;border-radius:56px;background:#101012;
+  padding:11px;box-shadow:0 24px 60px rgba(0,0,0,.18),0 4px 14px rgba(0,0,0,.10);
+}
+.device .screen{
+  position:relative;width:370px;height:800px;border-radius:46px;overflow:hidden;background:var(--canvas);
+}
+.screen .view{position:absolute;inset:0;display:none}
+.screen .view.on{display:block}
+
+/* ── 状态栏 ──────────────────────────── */
+.statusbar{
+  position:absolute;top:0;left:0;right:0;height:46px;z-index:40;
+  display:flex;align-items:flex-end;justify-content:space-between;
+  padding:0 30px 6px;pointer-events:none;
+}
+.statusbar .time{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.statusbar .icons{display:flex;align-items:center;gap:5px}
+.statusbar .icons svg{display:block}
+.sb-dark .time{color:var(--ink)} .sb-dark .icons{color:var(--ink)}
+.sb-light .time{color:var(--on-dark)} .sb-light .icons{color:var(--on-dark)}
+.homebar{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:rgba(0,0,0,.30);z-index:40;pointer-events:none}
+.sb-light ~ .homebar,.view.dark .homebar{background:rgba(255,255,255,.36)}
+
+/* ── 图片板块 ─────────────────────────── */
+.canvas-photo{position:absolute;inset:0;background:var(--canvas)}
+
+.photocard{
+  position:absolute;left:12px;right:12px;top:102px;bottom:48px;
+  border-radius:18px;background:var(--parchment);overflow:hidden;
+  box-shadow:3px 5px 30px rgba(0,0,0,.22);          /* product-shadow：全 App 唯一投影 */
+  touch-action:none;cursor:grab;user-select:none;
+  will-change:transform;
+}
+.photocard.spring{transition:transform .42s var(--settle)}
+.photocard.leaving{transition:transform .34s var(--spatial),opacity .34s var(--settle);transform:translate(-46%,-3%) rotate(-7deg)!important;opacity:0}
+.photocard.arriving{transition:transform .42s var(--spatial);transform:translate(18%,0) rotate(1.5deg)}
+.photocard .img{position:absolute;inset:0}
+.photocard .count-chip{
+  position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+  background:var(--chip);border-radius:50px;padding:5px 12px;pointer-events:none;
+  font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums;
+}
+/* 拖动方向语义浮标（左=删除红 / 右=跳过白；随拖动进度渐显） */
+.dragbadge{
+  position:absolute;top:50%;transform:translateY(-50%);
+  border-radius:50px;padding:8px 16px;font-size:15px;font-weight:600;letter-spacing:-.01em;
+  opacity:0;transition:opacity .15s linear;pointer-events:none;z-index:3;
+}
+.dragbadge.left{left:20px;background:var(--danger);color:#fff}
+.dragbadge.right{right:20px;background:#fff;color:var(--ink-strong)}
+
+/* 悬浮 chrome（半透白一行；点按照片切换显隐） */
+.chromebar{
+  position:absolute;top:52px;left:12px;right:12px;z-index:30;
+  display:flex;align-items:center;gap:10px;
+  background:var(--chrome);border:1px solid var(--hairline);border-radius:18px;
+  padding:8px 8px 8px 12px;
+  transition:transform .38s var(--settle),opacity .28s var(--settle);
+}
+.chromebar.hid{transform:translateY(-130%);opacity:0;pointer-events:none}
+.seg{position:relative;display:flex;background:var(--divider-soft);border-radius:8px;padding:3px;flex:1;min-width:0}
+.seg .pill{
+  position:absolute;top:3px;bottom:3px;width:calc(50% - 3px);
+  background:var(--canvas);border-radius:6px;
+  transition:transform .38s var(--settle);
+}
+.seg button{
+  appearance:none;border:0;background:transparent;flex:1;z-index:1;
+  font:inherit;font-size:14px;line-height:1;padding:8px 0;color:var(--ink-strong);cursor:pointer;
+  letter-spacing:-.016em;
+}
+.seg button.on{color:var(--ink);font-weight:600}
+.chromebar .vd{width:1px;height:24px;background:var(--hairline);flex:none}
+.cbtn{
+  appearance:none;border:0;background:transparent;flex:none;height:48px;min-width:48px;
+  font:inherit;font-size:15px;color:var(--blue);letter-spacing:-.016em;cursor:pointer;border-radius:8px;
+}
+.cbtn:hover{background:rgba(0,102,204,.06)}
+
+/* 收纳把手（chrome 收起时出现） */
+.grabber{
+  position:absolute;top:58px;left:50%;transform:translateX(-50%);z-index:29;
+  width:48px;height:48px;display:flex;align-items:flex-start;justify-content:center;
+  background:transparent;border:0;cursor:pointer;opacity:0;pointer-events:none;
+  transition:opacity .3s var(--settle);
+}
+.grabber i{width:28px;height:5px;border-radius:3px;background:var(--chip);margin-top:10px}
+.chromebar.hid ~ .grabber{opacity:1;pointer-events:auto}
+
+/* 右上动作圆片 */
+.acts{position:absolute;top:112px;right:20px;z-index:20;display:flex;gap:8px}
+.ghost{
+  appearance:none;border:0;background:var(--chip);border-radius:8px;
+  height:48px;min-width:48px;font:inherit;font-size:14px;color:var(--ink);letter-spacing:-.016em;cursor:pointer;
+  padding:0 14px;transition:transform .18s var(--settle);
+}
+.ghost:active{transform:scale(.96)}
+.ghost:disabled{color:rgba(29,29,31,.4);cursor:default}
+
+/* 拖动教练提示 */
+.coach{
+  position:absolute;top:170px;left:50%;transform:translateX(-50%);z-index:20;
+  background:var(--chip);border-radius:50px;padding:7px 14px;pointer-events:none;
+  font-size:12.5px;color:var(--ink);letter-spacing:-.01em;white-space:nowrap;
+  transition:opacity .4s var(--settle),transform .4s var(--settle);
+}
+.coach.bye{opacity:0;transform:translateX(-50%) translateY(-8px)}
+
+/* ── 视频板块（深色面） ───────────────── */
+.canvas-video{position:absolute;inset:0;background:#000}
+.canvas-video .poster{position:absolute;inset:0;opacity:.92}
+.vacts{position:absolute;top:52px;right:12px;z-index:20;display:flex;align-items:center;gap:8px;padding-top:0}
+.darkchip{
+  appearance:none;border:0;background:rgba(0,0,0,.4);border-radius:8px;
+  height:48px;min-width:48px;font:inherit;font-size:14px;color:rgba(255,255,255,.95);letter-spacing:-.016em;
+  cursor:pointer;padding:0 12px;transition:transform .18s var(--settle);
+}
+.darkchip:disabled{color:rgba(255,255,255,.5);cursor:default}
+.darkchip:active{transform:scale(.96)}
+.mute{
+  appearance:none;border:0;background:rgba(0,0,0,.4);border-radius:50%;
+  width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:transform .18s var(--settle);
+}
+.mute:active{transform:scale(.94)}
+.vmark{
+  position:absolute;right:20px;bottom:56px;appearance:none;border:0;cursor:pointer;
+  background:var(--on-dark);color:#000;border-radius:50px;padding:11px 22px;
+  font:inherit;font-size:17px;transition:transform .18s var(--settle);
+  box-shadow:0 6px 24px rgba(0,0,0,.35);
+}
+.vmark:active{transform:scale(.95)}
+.vmark.off{background:rgba(255,255,255,.16);color:rgba(255,255,255,.85)}
+.vhint{position:absolute;bottom:64px;left:24px;z-index:20;font-size:12.5px;color:rgba(255,255,255,.72);letter-spacing:-.01em;pointer-events:none}
+/* 视频板：点按层 / 暂停指示 / 进度条 */
+.vtap{position:absolute;inset:0;cursor:pointer}
+.vpause{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:22;
+  width:72px;height:72px;border-radius:50%;background:rgba(0,0,0,.4);
+  display:flex;align-items:center;justify-content:center;pointer-events:none;
+}
+.vbar{position:absolute;left:20px;right:20px;bottom:30px;height:3px;border-radius:2px;background:rgba(255,255,255,.3);z-index:20;cursor:pointer}
+.vfill{height:100%;border-radius:2px;background:#fff;width:0}
+.vtime{position:absolute;right:20px;bottom:44px;z-index:20;font-size:12px;color:rgba(255,255,255,.8);font-variant-numeric:tabular-nums;pointer-events:none}
+
+/* ── 结算抽屉 ─────────────────────────── */
+.canvas-settle{position:absolute;inset:0;background:var(--canvas)}
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+.dimcard{position:absolute;left:12px;right:12px;top:102px;bottom:48px;border-radius:18px;overflow:hidden;box-shadow:3px 5px 30px rgba(0,0,0,.22);filter:saturate(.9)}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;background:var(--canvas);
+  border-radius:18px 18px 0 0;padding:8px 20px 30px;z-index:10;
+  box-shadow:0 -1px 0 var(--hairline);
+}
+.sheet .handle{width:36px;height:5px;border-radius:3px;background:var(--hairline);margin:6px auto 14px}
+.sheet h2{font-size:22px;font-weight:600;letter-spacing:-.011em;text-align:center}
+.sheet .mnk{font-size:17px;line-height:25px;letter-spacing:-.022em;text-align:center;margin-top:8px}
+.sheet .note{font-size:14px;color:var(--ink-sub);letter-spacing:-.016em;line-height:1.55;margin-top:8px}
+.sheet .desel{display:flex;justify-content:flex-end;margin:4px -8px 0}
+.sheet .desel button{appearance:none;border:0;background:transparent;font:inherit;font-size:15px;color:var(--blue);height:44px;padding:0 8px;cursor:pointer;letter-spacing:-.01em}
+.permrow{display:flex;align-items:center;margin-top:10px}
+.permrow .lbl{flex:1;font-size:17px;letter-spacing:-.022em}
+.ioswitch{
+  appearance:none;border:0;width:51px;height:31px;border-radius:50px;background:var(--check-ring);
+  position:relative;cursor:pointer;transition:background .25s var(--settle);flex:none;
+}
+.ioswitch::after{
+  content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;
+  background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.18);transition:transform .25s var(--settle);
+}
+.ioswitch.on{background:var(--blue)}
+.ioswitch.on::after{transform:translateX(20px)}
+.warnstrip{
+  margin:12px 0 0;background:var(--err-bg);border-radius:8px;padding:10px 12px;
+  font-size:14px;font-weight:600;color:var(--danger);letter-spacing:-.016em;
+  display:none;
+}
+.warnstrip.on{display:block}
+.list{margin-top:4px}
+.item{display:flex;align-items:center;min-height:56px;gap:12px}
+.item + .item{border-top:1px solid var(--divider-soft)}
+.ccheck{
+  appearance:none;border:0;background:transparent;width:24px;height:24px;flex:none;border-radius:50%;
+  border:1.5px solid var(--check-ring);cursor:pointer;position:relative;transition:background .2s var(--settle);
+}
+.ccheck.on{background:var(--blue);border-color:var(--blue)}
+.ccheck.on::after{
+  content:"";position:absolute;left:8px;top:4.5px;width:5px;height:10px;
+  border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);
+}
+.item .thumb{width:48px;height:48px;border-radius:8px;background:var(--parchment);overflow:hidden;flex:none}
+.item .nm{flex:1;font-size:17px;letter-spacing:-.022em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.item .sz{font-size:14px;color:var(--ink-sub);letter-spacing:-.016em;font-variant-numeric:tabular-nums}
+.capwarn{font-size:14px;color:var(--danger);letter-spacing:-.016em;margin-top:8px;display:none}
+.capwarn.on{display:block}
+.pill{
+  appearance:none;border:0;cursor:pointer;width:100%;
+  background:var(--blue);color:#fff;border-radius:50px;padding:13px 22px;margin-top:14px;
+  font:inherit;font-size:17px;letter-spacing:-.022em;transition:transform .18s var(--settle),background .2s;
+}
+.pill:active{transform:scale(.95)}
+.pill.danger{background:var(--danger)}
+.pill.ghosty{background:var(--pearl);color:var(--ink-strong);border:1.5px solid var(--divider-soft);font-size:14px;border-radius:11px;padding:12px 14px}
+.batches{font-size:14px;color:var(--ink-sub);letter-spacing:-.016em;text-align:center;margin-top:10px}
+
+/* ── 回收站 / 设置（分组列表语汇） ─────── */
+.navbar{position:relative;height:48px;display:flex;align-items:center;padding:0 6px}
+.navbar .back{
+  appearance:none;border:0;background:transparent;font:inherit;font-size:17px;color:var(--blue);
+  height:48px;min-width:48px;cursor:pointer;border-radius:8px;padding:0 6px;
+}
+.navbar .ttl{position:absolute;left:0;right:0;text-align:center;font-size:17px;font-weight:600;letter-spacing:-.011em;pointer-events:none}
+.scrollarea{position:absolute;inset:48px 0 0 0;overflow-y:auto;padding:0 16px 24px;scrollbar-width:none}
+.scrollarea::-webkit-scrollbar{display:none}
+.sect{font-size:13px;color:var(--ink-sub);letter-spacing:-.01em;padding:22px 4px 7px}
+.group{background:var(--parchment);border-radius:18px;overflow:hidden}
+.row{display:flex;align-items:center;min-height:48px;padding:6px 16px;gap:12px}
+.row + .row,.row + .rowdiv{border-top:1px solid var(--divider-soft)}
+.rowdiv{height:1px;background:var(--divider-soft);margin-left:16px}
+.row .rl{flex:1;font-size:17px;letter-spacing:-.022em}
+.row .val{font-size:17px;color:var(--blue);letter-spacing:-.022em}
+.checkrow{display:flex;align-items:center;min-height:48px;padding:6px 16px;cursor:pointer;gap:12px}
+.checkrow + .checkrow{border-top:1px solid var(--divider-soft)}
+.checkrow .rl{flex:1;font-size:17px;letter-spacing:-.022em}
+.checkrow svg{flex:none}
+.slrow{display:flex;align-items:center;min-height:56px;padding:6px 16px;gap:12px}
+.slrow + .slrow{border-top:1px solid var(--divider-soft)}
+.slrow .rl{font-size:17px;letter-spacing:-.022em;width:56px;flex:none}
+.slrow .num{font-size:17px;color:var(--ink-strong);width:40px;text-align:right;flex:none;font-variant-numeric:tabular-nums}
+.slider{flex:1;position:relative;height:28px;display:flex;align-items:center;cursor:pointer}
+.slider .trk{width:100%;height:4px;border-radius:2px;background:var(--hairline)}
+.slider .fill{position:absolute;left:0;top:12px;height:4px;border-radius:2px;background:var(--blue)}
+.slider .th{position:absolute;top:4px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);margin-left:-11px}
+.trashrow{display:flex;align-items:center;min-height:60px;padding:6px 14px;gap:12px;cursor:pointer}
+.trashrow + .trashrow{border-top:1px solid var(--divider-soft)}
+.trashrow .thumb{width:52px;height:52px;border-radius:8px;overflow:hidden;flex:none}
+.trashrow .col{flex:1;min-width:0}
+.trashrow .nm{font-size:17px;letter-spacing:-.022em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trashrow .sub{font-size:12px;color:var(--ink-sub);letter-spacing:-.01em;margin-top:2px}
+.countrow{display:flex;align-items:center;padding:6px 2px}
+.countrow .c{flex:1;font-size:14px;color:var(--ink-sub);letter-spacing:-.016em}
+.countrow button{appearance:none;border:0;background:transparent;font:inherit;font-size:15px;color:var(--blue);height:44px;padding:0 10px;cursor:pointer}
+
+/* 信息抽屉（photo view 内浮层演示） */
+.infosheet{position:absolute;inset:0;z-index:60}
+.infosheet .iscrim{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+.isheet{
+  position:absolute;left:0;right:0;bottom:0;background:var(--canvas);
+  border-radius:18px 18px 0 0;padding:8px 20px 30px;box-shadow:0 -1px 0 var(--hairline);
+  animation:sheetup .45s var(--spatial);
+}
+@keyframes sheetup{from{transform:translateY(102%)}to{transform:translateY(0)}}
+.isheet .handle{width:36px;height:5px;border-radius:3px;background:var(--hairline);margin:6px auto 14px}
+.ithumb{height:150px;border-radius:11px;background:var(--parchment);margin:8px 0 14px;overflow:hidden}
+.irow{display:flex;align-items:center;min-height:48px;padding:0 16px;gap:12px}
+.irow + .irow{border-top:1px solid var(--divider-soft)}
+.irow .l{font-size:17px;letter-spacing:-.022em;color:var(--ink)}
+.irow .v{font-size:17px;letter-spacing:-.022em;color:var(--ink-sub);text-align:right;max-width:200px;word-break:break-all}
+
+/* 占位照片（色场模拟，非真实图片） */
+.ph-1{background:
+  radial-gradient(120% 90% at 78% 18%,#F6C99F 0%,rgba(246,201,159,0) 55%),
+  radial-gradient(110% 100% at 12% 85%,#8C5B3F 0%,rgba(140,91,63,0) 60%),
+  linear-gradient(168deg,#E2A56F 0%,#B3714B 48%,#6E4530 100%)}
+.ph-2{background:
+  radial-gradient(130% 90% at 20% 15%,#CFE3E8 0%,rgba(207,227,232,0) 55%),
+  radial-gradient(120% 110% at 85% 90%,#5E7D84 0%,rgba(94,125,132,0) 58%),
+  linear-gradient(170deg,#AFC8CC 0%,#7A9BA1 52%,#4E6A70 100%)}
+.ph-3{background:
+  radial-gradient(120% 100% at 80% 20%,#3E4C6B 0%,rgba(62,76,107,0) 55%),
+  radial-gradient(130% 100% at 15% 88%,#8B77A8 0%,rgba(139,119,168,0) 55%),
+  linear-gradient(172deg,#5C6787 0%,#3F4460 55%,#282B41 100%)}
+.ph-4{background:
+  radial-gradient(130% 90% at 25% 20%,#E8D9A8 0%,rgba(232,217,168,0) 52%),
+  radial-gradient(120% 110% at 80% 85%,#6F7D4E 0%,rgba(111,125,78,0) 58%),
+  linear-gradient(168deg,#C9C088 0%,#8F9464 50%,#5C6140 100%)}
+.vp-1{background:
+  radial-gradient(120% 90% at 75% 25%,#4A3B57 0%,rgba(74,59,87,0) 55%),
+  linear-gradient(168deg,#322B3E 0%,#191522 60%,#0B0910 100%)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-duration:.01ms!important;animation:none!important}
+}
+@media (max-width:860px){
+  .stage{flex-direction:column;align-items:center}
+  .rail{flex-direction:row;flex-wrap:wrap;justify-content:center;max-width:392px}
+  .rail .rail-label{display:none}
+  .rail button{padding:10px 14px}
+  .rail .tok{display:none}
+}
+@media (max-width:420px){
+  .device{transform:scale(.86);transform-origin:top center;margin-bottom:-110px}
+}
+</style>
+</head>
+<body>
+
+<header class="pagehead">
+  <h1>卡待删 · Daylight 预览</h1>
+  <p>iOS 质感重设计 · token 与 <code>ui/kit/DesignKit.kt</code> 一致</p>
+</header>
+<p class="stagenote">可交互：<b>拖动照片卡</b>（跟手 + 倾斜，过阈值松手 = 标记退场换下一张）· <b>点按照片</b>收起/唤出顶栏 · 页签/勾选/开关都能点。“照片”为 CSS 占位色场。</p>
+
+<div class="stage">
+  <nav class="rail" id="rail">
+    <div class="rail-label">界面</div>
+    <button data-view="photo" class="on">图片板块</button>
+    <button data-view="video">视频板块</button>
+    <button data-view="settle">结算抽屉</button>
+    <button data-view="trash">回收站</button>
+    <button data-view="settings">设置</button>
+    <div class="tok">
+      <div class="sw"><i style="background:#0066CC"></i>Action Blue · 唯一强调色</div>
+      <div class="sw"><i style="background:#F5F5F7"></i>Parchment · 分组容器</div>
+      <div class="sw"><i style="background:#1D1D1F"></i>Ink · 正文墨</div>
+      <div class="sw"><i style="background:#D70015"></i>Danger · 危险语义</div>
+      <div class="row">圆角四档 5 / 8 / 11 / 18 + pill<br>阴影只给影像（唯一投影）<br>字重仅 400 / 600 · 全负字距<br>弹簧 spatial / settle + 触觉回执</div>
+    </div>
+  </nav>
+
+  <div class="device">
+    <div class="screen" id="screen">
+
+      <!-- ① 图片板块 -->
+      <section class="view on" data-view="photo">
+        <div class="canvas-photo"></div>
+        <div class="statusbar sb-dark"><span class="time">9:41</span>
+          <span class="icons">
+            <svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="7" width="3" height="5" rx="1" fill="currentColor"/><rect x="5" y="5" width="3" height="7" rx="1" fill="currentColor"/><rect x="10" y="2.5" width="3" height="9.5" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg>
+            <svg width="17" height="12" viewBox="0 0 17 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 4.5a10 10 0 0 1 14 0"/><path d="M4.2 7.2a6.2 6.2 0 0 1 8.6 0"/><circle cx="8.5" cy="10.2" r="1.4" fill="currentColor" stroke="none"/></svg>
+            <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.6" y="1" width="20" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2.6" y="3" width="14" height="6" rx="1.5" fill="currentColor"/><rect x="22.5" y="4" width="2" height="4" rx="1" fill="currentColor"/></svg>
+          </span>
+        </div>
+
+        <div class="chromebar" id="chrome">
+          <div class="seg" id="seg">
+            <div class="pill"></div>
+            <button class="on">照片</button>
+            <button>视频</button>
+          </div>
+          <div class="vd"></div>
+          <button class="cbtn">回收站</button>
+          <button class="cbtn">设置</button>
+        </div>
+        <button class="grabber" id="grabber" aria-label="唤出顶栏"><i></i></button>
+
+        <div class="acts">
+          <button class="ghost" id="infobtn">信息</button>
+          <button class="ghost">撤回</button>
+        </div>
+
+        <article class="photocard spring" id="card">
+          <div class="img ph-1" id="cardimg"></div>
+          <div class="dragbadge left" id="lbadge">删除</div>
+          <div class="dragbadge right" id="rbadge">跳过</div>
+          <div class="count-chip" id="counter">3 / 20</div>
+        </article>
+
+        <!-- 信息抽屉（点「信息」打开） -->
+        <div class="infosheet" id="infosheet" hidden>
+          <div class="iscrim" id="iscrim"></div>
+          <div class="isheet">
+            <div class="handle"></div>
+            <div class="ithumb ph-1" id="ithumb"></div>
+            <div class="group" id="irows"></div>
+          </div>
+        </div>
+
+        <div class="coach" id="coach">拖我试试 · 左滑 = 标记删除</div>
+        <div class="homebar"></div>
+      </section>
+
+      <!-- ② 视频板块 -->
+      <section class="view dark" data-view="video">
+        <div class="canvas-video"></div>
+        <div class="poster vp-1"></div>
+        <div class="vtap" id="vtap"></div>
+        <div class="vpause" id="vpause" hidden>
+          <svg width="30" height="30" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="#fff"/></svg>
+        </div>
+        <div class="statusbar sb-light"><span class="time">9:41</span>
+          <span class="icons">
+            <svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="7" width="3" height="5" rx="1" fill="currentColor"/><rect x="5" y="5" width="3" height="7" rx="1" fill="currentColor"/><rect x="10" y="2.5" width="3" height="9.5" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg>
+            <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.6" y="1" width="20" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2.6" y="3" width="14" height="6" rx="1.5" fill="currentColor"/><rect x="22.5" y="4" width="2" height="4" rx="1" fill="currentColor"/></svg>
+          </span>
+        </div>
+        <div class="vacts">
+          <button class="darkchip">撤回</button>
+          <button class="darkchip">信息</button>
+          <button class="mute" id="mute" aria-label="声音开关">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="#fff" stroke="none"/><path id="muteArc" d="M15.5 8.5a5 5 0 0 1 0 7"/><line x1="17" y1="9" x2="22" y2="15" style="display:none" id="muteSlash"/></svg>
+          </button>
+        </div>
+        <div class="vhint">上滑下一个 · 下滑上一个 · 点按暂停</div>
+        <div class="vtime" id="vtime">0:24 / 1:03</div>
+        <div class="vbar" id="vbar"><div class="vfill" id="vfill"></div></div>
+        <button class="vmark" id="vmark">标记删除</button>
+        <div class="homebar"></div>
+      </section>
+
+      <!-- ③ 结算抽屉 -->
+      <section class="view" data-view="settle">
+        <div class="canvas-settle"></div>
+        <div class="dimcard"><div class="img ph-3" style="position:absolute;inset:0"></div></div>
+        <div class="statusbar sb-dark"><span class="time">9:41</span><span></span></div>
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="handle"></div>
+          <h2>确认本轮删除</h2>
+          <p class="mnk">本轮共 20 项 · 你标记了 4 项 · 勾选了 <span id="kn">3</span> 项</p>
+          <p class="note">默认移入回收站，可从本 App「回收站」页找回，保留期以每项标注为准。vivo 系统相册「最近删除」不显示这些项目，属正常。</p>
+          <div class="desel"><button id="desel">一键全部不选</button></div>
+          <div class="warnstrip" id="warnstrip">永久删除不可恢复</div>
+          <div class="list" id="slist">
+            <div class="item"><input type="button" class="ccheck on"><div class="thumb ph-1"></div><span class="nm">IMG_20260521_093412.jpg</span><span class="sz">3.4 MB</span></div>
+            <div class="item"><input type="button" class="ccheck on"><div class="thumb ph-2"></div><span class="nm">Screenshot_2026-05-20-22-31-07.png</span><span class="sz">1.2 MB</span></div>
+            <div class="item"><input type="button" class="ccheck on"><div class="thumb ph-4"></div><span class="nm">mmexport1716187462.jpg</span><span class="sz">2.8 MB</span></div>
+            <div class="item"><input type="button" class="ccheck"><div class="thumb ph-3"></div><span class="nm">VID_20260402_115530.mp4</span><span class="sz">48.5 MB</span></div>
+          </div>
+          <p class="capwarn" id="capwarn">永久删除单轮上限 30 项，请分轮或改用回收站</p>
+          <div class="permrow">
+            <span class="lbl">立即永久删除</span>
+            <input type="button" class="ioswitch" id="permswitch" aria-label="立即永久删除">
+          </div>
+          <button class="pill" id="confirmpill">移入回收站 3 项 · 7.4 MB</button>
+          <p class="batches">将弹出 1 次系统确认，每批 ≤50 项</p>
+        </div>
+        <div class="homebar" style="background:rgba(255,255,255,.5)"></div>
+      </section>
+
+      <!-- ④ 回收站 -->
+      <section class="view" data-view="trash">
+        <div style="position:absolute;inset:0;background:var(--canvas)"></div>
+        <div class="statusbar sb-dark"><span class="time">9:41</span><span></span></div>
+        <div style="position:absolute;inset:46px 0 0;display:flex;flex-direction:column">
+          <div class="navbar"><button class="back">‹ 返回</button><span class="ttl">回收站</span></div>
+          <div class="scrollarea">
+            <div class="countrow" style="margin-top:2px">
+              <span class="c">共 3 项 · 已选 <span id="tcount">2</span> 项</span>
+              <button>全选</button><button id="tnone">全不选</button>
+            </div>
+            <div class="group" style="margin-top:6px">
+              <div class="trashrow" data-t="on"><input type="button" class="ccheck on tcheck"><div class="thumb ph-1"></div>
+                <div class="col"><div class="nm">IMG_20260521_093412.jpg</div><div class="sub">3.4 MB · 保留至 2026-10-18</div></div></div>
+              <div class="trashrow" data-t="on"><input type="button" class="ccheck on tcheck"><div class="thumb ph-2"></div>
+                <div class="col"><div class="nm">Screenshot_2026-05-20-22-31-07.png</div><div class="sub">1.2 MB · 保留至 2026-10-18</div></div></div>
+              <div class="trashrow"><input type="button" class="ccheck tcheck"><div class="thumb ph-4"></div>
+                <div class="col"><div class="nm">mmexport1716187462.jpg</div><div class="sub">2.8 MB · 到期时间未知</div></div></div>
+            </div>
+            <button class="pill" style="margin-top:16px">找回所选 2 项</button>
+            <button class="pill danger" style="margin-top:10px">清空回收站（3 项）</button>
+          </div>
+        </div>
+        <div class="homebar"></div>
+      </section>
+
+      <!-- ⑤ 设置 -->
+      <section class="view" data-view="settings">
+        <div style="position:absolute;inset:0;background:var(--canvas)"></div>
+        <div class="statusbar sb-dark"><span class="time">9:41</span><span></span></div>
+        <div style="position:absolute;inset:46px 0 0;display:flex;flex-direction:column">
+          <div class="navbar"><button class="back">‹ 返回</button><span class="ttl">设置</span></div>
+          <div class="scrollarea">
+            <div class="sect">手势映射 · 图片板块</div>
+            <div class="group">
+              <div class="row"><span class="rl">左滑</span><span class="val">标记删除</span></div>
+              <div class="row"><span class="rl">右滑</span><span class="val">跳过</span></div>
+              <div class="row"><span class="rl">上滑</span><span class="val">查看信息</span></div>
+            </div>
+            <div class="sect">每轮数量（1~300）</div>
+            <div class="group">
+              <div class="slrow"><span class="rl">照片</span><div class="slider"><div class="trk"></div><div class="fill" style="width:31%"></div><div class="th" style="left:31%"></div></div><span class="num">20</span></div>
+              <div class="slrow"><span class="rl">视频</span><div class="slider"><div class="trk"></div><div class="fill" style="width:20%"></div><div class="th" style="left:20%"></div></div><span class="num">10</span></div>
+            </div>
+            <div class="sect">图片板块</div>
+            <div class="group">
+              <div class="checkrow on"><span class="rl">统一：全部图片归「照片」一个板块（推荐）</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.5l3.2 3.2L13.5 4" fill="none" stroke="#0066CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+              <div class="checkrow"><span class="rl">分开：照片 / 截图 / 已保存图片</span></div>
+            </div>
+            <div class="sect">排序</div>
+            <div class="group">
+              <div class="checkrow on"><span class="rl">随机</span><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.5l3.2 3.2L13.5 4" fill="none" stroke="#0066CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+              <div class="checkrow"><span class="rl">大文件优先</span></div>
+              <div class="checkrow"><span class="rl">最新优先</span></div>
+              <div class="checkrow"><span class="rl">最早优先</span></div>
+            </div>
+            <div class="sect">视频标记停留</div>
+            <div class="group">
+              <div class="slrow"><div class="slider"><div class="trk"></div><div class="fill" style="width:40%"></div><div class="th" style="left:40%"></div></div><span class="num" style="width:64px">800ms</span></div>
+            </div>
+            <div class="sect">永久删除</div>
+            <div class="group">
+              <div class="row"><span class="rl">允许永久删除</span><input type="button" class="ioswitch on" aria-label="允许永久删除"></div>
+            </div>
+          </div>
+        </div>
+        <div class="homebar"></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ── 界面切换 ── */
+  var rail = document.getElementById('rail');
+  var views = document.querySelectorAll('.view');
+  rail.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-view]'); if(!b) return;
+    rail.querySelectorAll('button').forEach(function(x){x.classList.toggle('on', x===b)});
+    views.forEach(function(v){v.classList.toggle('on', v.dataset.view===b.dataset.view)});
+  });
+
+  /* ── 分段页签：滑片 ── */
+  var seg = document.getElementById('seg');
+  if (seg) seg.addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    var idx = Array.prototype.indexOf.call(seg.querySelectorAll('button'), b);
+    seg.querySelector('.pill').style.transform = 'translateX(' + (idx*100) + '%)';
+    seg.querySelectorAll('button').forEach(function(x,i){x.classList.toggle('on', i===idx)});
+  });
+
+  /* ── 图片板：chrome 显隐 ── */
+  var chrome = document.getElementById('chrome');
+  var card = document.getElementById('card');
+  var grabber = document.getElementById('grabber');
+  if (chrome) {
+    grabber.addEventListener('click', function(){ chrome.classList.remove('hid'); });
+  }
+
+  /* ── 照片数据（占位色场） ── */
+  var photos = [
+    {cls:'ph-1', name:'IMG_20260521_093412.jpg', meta:'拍摄于 2026-05-21 · 3.4 MB'},
+    {cls:'ph-2', name:'Screenshot_2026-05-20-22-31-07.png', meta:'拍摄于 2026-05-20 · 1.2 MB'},
+    {cls:'ph-4', name:'mmexport1716187462.jpg', meta:'拍摄于 2026-05-20 · 2.8 MB'},
+    {cls:'ph-3', name:'IMG_20260412_180233.jpg', meta:'拍摄于 2026-04-12 · 4.1 MB'}
+  ];
+  var idx = 0, seen = 3, total = 20;
+  var cardimg = document.getElementById('cardimg');
+  var counter = document.getElementById('counter');
+  var coach = document.getElementById('coach');
+  var lbadge = document.getElementById('lbadge');
+  var rbadge = document.getElementById('rbadge');
+  function apply(){ var p = photos[idx];
+    cardimg.className = 'img ' + p.cls;
+    counter.textContent = seen + ' / ' + total;
+  }
+  function next(){ idx = (idx+1) % photos.length; if(seen < total) seen++; apply(); }
+
+  /* ── 拖动跟手 + 阈值退场（App 的 spatial/settle 弹簧的 CSS 近似） ── */
+  var dragging=false, sx=0, sy=0, dx=0, dy=0, moved=false, coached=false;
+  card.addEventListener('pointerdown', function(e){
+    dragging=true; moved=false; dx=0; dy=0; sx=e.clientX; sy=e.clientY;
+    card.classList.remove('spring');
+    try{ card.setPointerCapture(e.pointerId); }catch(_){}
+  });
+  card.addEventListener('pointermove', function(e){
+    if(!dragging) return;
+    dx = e.clientX - sx; dy = e.clientY - sy;
+    if(Math.abs(dx)+Math.abs(dy) > 6) moved = true;
+    /* 跟手 16% + 倾斜 + 方向浮标渐显（与 App 一致） */
+    card.style.transform = 'translate(' + (dx*0.16) + 'px,' + (dy*0.16) + 'px) rotate(' + (dx*0.16*0.12) + 'deg)';
+    if (lbadge) lbadge.style.opacity = Math.max(0, Math.min(1, (-dx - 90) / 80));
+    if (rbadge) rbadge.style.opacity = Math.max(0, Math.min(1, (dx - 90) / 80));
+  });
+  function release(){
+    if(!dragging) return; dragging=false;
+    card.classList.add('spring'); card.style.transform='';
+    if (lbadge) lbadge.style.opacity = 0;
+    if (rbadge) rbadge.style.opacity = 0;
+    if(moved && !coached){ coached=true; coach.classList.add('bye'); }
+    if(dx <= -90){ markExit(); }          /* 左滑 = 标记删除 → 退场换卡 */
+    else if(!moved){ chrome.classList.toggle('hid'); } /* 点按 = 切换顶栏 */
+    dx=0; dy=0;
+  }
+  card.addEventListener('pointerup', release);
+  card.addEventListener('pointercancel', release);
+  function markExit(){
+    card.classList.remove('spring');
+    card.classList.add('leaving');
+    setTimeout(function(){
+      next();
+      card.classList.remove('leaving');
+      card.classList.add('arriving');
+      card.style.transform='';
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){
+        card.classList.remove('arriving');
+        card.classList.add('spring');
+      });});
+    }, 340);
+  }
+
+  /* ── 信息抽屉（「信息」圆片打开；遮罩点击关闭） ── */
+  var infobtn = document.getElementById('infobtn');
+  var infosheet = document.getElementById('infosheet');
+  var irows = [
+    ['拍摄时间','2026-05-21 09:34'],['尺寸','4080 × 3060'],['文件大小','3.4 MB'],
+    ['分辨率','1248 万像素'],['所在目录','DCIM/Camera/'],['设备型号','vivo S17 Pro']
+  ];
+  if (infobtn) infobtn.addEventListener('click', function(){
+    document.getElementById('ithumb').className = 'ithumb ' + photos[idx].cls;
+    document.getElementById('irows').innerHTML = irows.map(function(r){
+      return '<div class="irow"><span class="l">' + r[0] + '</span><span style="flex:1"></span><span class="v">' + r[1] + '</span></div>';
+    }).join('');
+    infosheet.hidden = false;
+  });
+  document.getElementById('iscrim').addEventListener('click', function(){ infosheet.hidden = true; });
+
+  /* ── 视频板 ── */
+  var mute = document.getElementById('mute');
+  if (mute) mute.addEventListener('click', function(){
+    var s = document.getElementById('muteSlash'); var a = document.getElementById('muteArc');
+    var off = s.style.display !== 'none';
+    s.style.display = off ? 'none' : '';
+    a.style.display = off ? '' : 'none';
+  });
+  var vmark = document.getElementById('vmark');
+  if (vmark) vmark.addEventListener('click', function(){
+    var off = vmark.classList.toggle('off');
+    vmark.textContent = off ? '取消标记' : '标记删除';
+  });
+
+  /* ── 视频板：进度条 / 暂停指示（点按切换，进度自动走） ── */
+  var vt = {sec: 24, dur: 63, paused: false};
+  function vfmt(s){ return Math.floor(s/60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function vrender(){
+    document.getElementById('vfill').style.width = (vt.sec / vt.dur * 100) + '%';
+    document.getElementById('vtime').textContent = vfmt(vt.sec) + ' / ' + vfmt(vt.dur);
+    document.getElementById('vpause').hidden = !vt.paused;
+  }
+  setInterval(function(){
+    if (!vt.paused && !document.querySelector('[data-view="video"]').classList.contains('on')) return;
+    if (!vt.paused){ vt.sec = (vt.sec + 1) % vt.dur; vrender(); }
+  }, 1000);
+  document.getElementById('vtap').addEventListener('click', function(){ vt.paused = !vt.paused; vrender(); });
+  var vbar = document.getElementById('vbar');
+  vbar.addEventListener('pointerdown', function(e){
+    var r = vbar.getBoundingClientRect();
+    vt.sec = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * vt.dur;
+    vrender();
+  });
+  vrender();
+
+  /* ── 结算抽屉：勾选 / 开关 / 联动 ── */
+  var slist = document.getElementById('slist');
+  var kn = document.getElementById('kn');
+  var permsw = document.getElementById('permswitch');
+  var warnstrip = document.getElementById('warnstrip');
+  var confirmpill = document.getElementById('confirmpill');
+  var desel = document.getElementById('desel');
+  function refreshSettle(){
+    var n = slist.querySelectorAll('.ccheck.on').length;
+    if (kn) kn.textContent = n;
+    if (desel) desel.disabled = n===0;
+    var perm = permsw.classList.contains('on');
+    if (confirmpill){
+      if (n===0){ confirmpill.textContent='开始下一轮'; confirmpill.className='pill'; }
+      else if (perm){ confirmpill.textContent='永久删除 ' + n + ' 项 · 不可恢复'; confirmpill.className='pill danger'; }
+      else { confirmpill.textContent='移入回收站 ' + n + ' 项 · 7.4 MB'; confirmpill.className='pill'; }
+    }
+  }
+  if (slist) slist.addEventListener('click', function(e){
+    if (e.target.classList.contains('ccheck')){ e.target.classList.toggle('on'); refreshSettle(); }
+  });
+  if (permsw) permsw.addEventListener('click', function(){
+    permsw.classList.toggle('on');
+    warnstrip.classList.toggle('on', permsw.classList.contains('on'));
+    refreshSettle();
+  });
+  if (desel) desel.addEventListener('click', function(){
+    slist.querySelectorAll('.ccheck').forEach(function(c){c.classList.remove('on')});
+    refreshSettle();
+  });
+  if (confirmpill) confirmpill.addEventListener('click', function(){
+    if (slist.querySelectorAll('.ccheck.on').length===0){ /* 跳过本轮 */ }
+  });
+
+  /* ── 回收站勾选 ── */
+  var tcount = document.getElementById('tcount');
+  document.querySelectorAll('.trashrow').forEach(function(r){
+    r.addEventListener('click', function(e){
+      if (e.target.classList.contains('ccheck')) return;
+      var c = r.querySelector('.ccheck'); if(c) c.classList.toggle('on');
+      refreshTrash();
+    });
+  });
+  document.querySelectorAll('.tcheck').forEach(function(c){
+    c.addEventListener('click', function(){ c.classList.toggle('on'); refreshTrash(); });
+  });
+  var tnone = document.getElementById('tnone');
+  if (tnone) tnone.addEventListener('click', function(){
+    document.querySelectorAll('.tcheck').forEach(function(c){c.classList.remove('on')});
+    refreshTrash();
+  });
+  function refreshTrash(){
+    var n = document.querySelectorAll('.tcheck.on').length;
+    if (tcount) tcount.textContent = n;
+  }
+
+  /* ── 设置：勾选行 / 开关 ── */
+  document.querySelectorAll('.checkrow').forEach(function(r){
+    r.addEventListener('click', function(){
+      var group = r.parentElement;
+      group.querySelectorAll('.checkrow').forEach(function(x){
+        var sv = x.querySelector('svg'); if (sv) sv.remove();
+        x.classList.remove('on');
+      });
+      r.classList.add('on');
+      r.insertAdjacentHTML('beforeend',
+        '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 8.5l3.2 3.2L13.5 4" fill="none" stroke="#0066CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    });
+  });
+  document.querySelectorAll('.ioswitch').forEach(function(sw){
+    sw.addEventListener('click', function(){ sw.classList.toggle('on'); });
+  });
+})();
+</script>
+</body>
+</html>
