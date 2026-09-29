@@ -30,11 +30,12 @@ import kotlin.random.Random
 //  · 左/右/上滑 → GestureMapping 动作（Screen 侧解析后调 onAction）：
 //    MARK_DELETE → session.mark(id) 消耗前进；SKIP → session.skip(id) 消耗前进（会话级出池）；
 //    SHOW_INFO → infoOpen 浮层（不消耗，关闭后回到当前卡）；下滑（DOWN）不绑定 → 无动作；
-//  · 撤回：session.undo()（false = 栈空置灰），连续撤回拨回本轮开头（undoDepth = 置灰判据镜像）；
+//  · 撤回：下滑手势 → session.undo()（栈空 = 无效，UI 拒绝触觉），连续撤回拨回本轮开头（undoDepth = 可撤判据镜像）；
 //  · 池尽判据：session.current == null && !session.roundEnded()；
 //  · 加载失败/被外部删除 → advance() 自动跳过不崩溃；
 //  · 轮次复用（M12）：startNextRound 跨轮沿用同一 BoardSession（startNewRound 不重建）——
-//    跳过项会话级出池、随机序不重洗；重建仅限 每轮设置变更（M11 热生效，轮初读取）/ 池尽重扫。
+//    跳过项会话级出池、随机序不重洗；重建仅限 排序/板块模式变更（下一轮生效，轮内 rebuild 会丢标记）/ 池尽重扫；
+//    每轮数量走热生效通道（init 起 live collect → session.updateRoundSize，当前轮立即按新值收尾）。
 // main 单写者（架构 §2 并发约定）；本类不持久化（进程存活期；标记只存内存）。
 
 class PhotoCardViewModel(
@@ -64,7 +65,7 @@ class PhotoCardViewModel(
     var seenCount by mutableStateOf(0)
         private set
 
-    /** 撤回按钮可用（false 置灰）；undoDepth = 会话撤回栈深度镜像。 */
+    /** 撤回可用（下滑手势判据）；undoDepth = 会话撤回栈深度镜像。 */
     var undoAvailable by mutableStateOf(false)
         private set
 
@@ -86,11 +87,16 @@ class PhotoCardViewModel(
 
     init {
         viewModelScope.launch {
-            // 先取落盘配置再建会话（每轮数量 / 排序）
+            // 先取落盘配置再建会话（每轮数量 / 排序 / 板块模式）
             applyRoundSettings()
             rebuild()
-            // 不在此处 collect 设置：轮内改动 = 下一轮生效（契约 4），轮内 rebuild 会丢标记；
-            // 生效点收敛在 startNextRound → applyRoundSettings（每轮开始重读，M11 热生效）
+        }
+        // 每轮数量热生效（PRD §4.4）：live collect → 会话 roundSize 即时同步——当前轮立即按新值收尾
+        // （已消耗 ≥ 新值 → roundEnded → M4 自动弹结算）；排序/板块模式仍下一轮生效（重建会丢标记，轮内不动）
+        viewModelScope.launch {
+            settings.perBoardRoundSize.collect { map ->
+                applyRoundSize(map[board] ?: SettingsRepository.defaultRoundSize(board))
+            }
         }
         // 详情加载：失效/被外部删除 → 自动跳过不崩溃；顺带行预取未来 5 项（切图零等待，解码预热在 Screen 侧）
         viewModelScope.launch {
@@ -101,16 +107,22 @@ class PhotoCardViewModel(
         }
     }
 
-    /** 每轮开始时重读落盘设置（M11：改每轮数量/排序无需杀进程，下一轮即生效）。
-     *  返回 true = 排序或每轮数量已变更 → 必须换新会话（BoardSession 构造定序且 roundSize 不可变）。 */
+    /** 每轮数量唯一同步口：VM 快照与会话 roundSize 一起改（幂等；init 前 session 为 null 只改快照）。 */
+    private fun applyRoundSize(size: Int) {
+        currentRoundSize = size
+        session?.updateRoundSize(size)
+        sync()
+    }
+
+    /** 轮初重读落盘设置（排序/板块模式；M11：改排序/模式无需杀进程，下一轮生效）。
+     *  返回 true = 排序或板块模式已变更 → 必须换新会话（BoardSession 排序快照不可变）。
+     *  每轮数量不在判定内：热生效通道已即时同步，不触发重建。 */
     private suspend fun applyRoundSettings(): Boolean {
         val newSort = settings.sortStrategy.first()
-        val newSize = settings.perBoardRoundSize.first()[board]
-            ?: SettingsRepository.defaultRoundSize(board)
+        applyRoundSize(settings.perBoardRoundSize.first()[board] ?: SettingsRepository.defaultRoundSize(board))
         val newMerged = settings.imageBoardsMerged.first()
-        val changed = newSort != sort || newSize != currentRoundSize || newMerged != mergedImages
+        val changed = newSort != sort || newMerged != mergedImages
         sort = newSort
-        currentRoundSize = newSize
         mergedImages = newMerged
         return changed
     }
@@ -149,7 +161,7 @@ class PhotoCardViewModel(
         refresh()
     }
 
-    // —— 撤回（右上角；连续撤回到本轮开头）——
+    // —— 撤回（下滑手势；连续撤回到本轮开头）——
 
     fun undo() {
         val s = session ?: return
@@ -166,8 +178,8 @@ class PhotoCardViewModel(
 
     /** 轮末/池尽「开始下一轮」（结算页 onNextRound 与池尽态按钮共用）：
      *  · 正常轮末：startNewRound() 跨轮复用同一 BoardSession（M12）——指针与排序快照不动，
-     *    跳过项/已展示项结构性不重入下轮、随机序不重洗；仅当 每轮数量或排序已改（M11 下一轮生效）/
-     *    池子正好耗尽（否则新轮开局即池尽）才重建；
+     *    跳过项/已展示项结构性不重入下轮、随机序不重洗；仅当 排序或板块模式已改（下一轮生效）/
+     *    池子正好耗尽（否则新轮开局即池尽）才重建；每轮数量已由热生效通道同步进会话，不触发重建；
      *  · 池尽（roundEnded=false，order 已穷尽）：池子重扫 = 合法重建口。 */
     fun startNextRound() {
         val s = session ?: return

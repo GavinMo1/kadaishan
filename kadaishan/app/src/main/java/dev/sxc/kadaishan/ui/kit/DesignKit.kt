@@ -304,39 +304,42 @@ fun PearlButton(
     }
 }
 
-/** 媒体面上的动作圆片（照片板「信息/撤回」）：半透灰底 + 墨字，radiusSm。 */
+/**
+ * 媒体面上的手势方向浮标（图片/视频板共用）：随拖动进度渐显（14f 起步、26f 满显，px），
+ * 跟手倾斜与卡片同步。side = -1 左缘（响应左拖）、+1 右缘（右拖）；
+ * vertical = true 底缘（下拉撤回，随 follow 渐显、不倾斜）。
+ * follow 惰性读取动画状态（graphicsLayer 内）→ 逐帧不重组。
+ */
 @Composable
-fun GhostChip(
+fun DragHintBadge(
     text: String,
-    onClick: () -> Unit,
+    bg: Color,
+    fg: Color,
+    side: Int,
+    follow: () -> Float,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true,
+    vertical: Boolean = false,
 ) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
     Box(
         modifier = modifier
             .graphicsLayer {
-                val s = if (pressed) 0.96f else 1f
+                val v = follow()
+                val progress = ((side * v - 14f) / 26f).coerceIn(0f, 1f)
+                alpha = progress
+                val s = 0.9f + 0.1f * progress
                 scaleX = s
                 scaleY = s
+                if (!vertical) rotationZ = v * 0.12f
             }
-            .onMediaChip(RoundedCornerShape(Daylight.radiusSm))
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                enabled = enabled,
-                onClick = onClick,
-            )
-            .minTouch()
-            .padding(horizontal = 14.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
+            .clip(RoundedCornerShape(Daylight.pillRadius))
+            .background(bg)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         androidx.compose.material3.Text(
             text = text,
-            color = if (enabled) Daylight.ink else Daylight.ink.copy(alpha = 0.4f),
-            fontSize = 14.sp,
-            letterSpacing = (-0.016).em,
+            color = fg,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }

@@ -122,6 +122,7 @@ body{
 }
 .dragbadge.left{left:20px;background:var(--danger);color:#fff}
 .dragbadge.right{right:20px;background:#fff;color:var(--ink-strong)}
+.dragbadge.bottom{left:50%;bottom:56px;transform:translateX(-50%);background:#fff;color:var(--ink-strong)}
 
 /* 悬浮 chrome（半透白一行；点按照片切换显隐） */
 .chromebar{
@@ -161,17 +162,7 @@ body{
 .grabber i{width:28px;height:5px;border-radius:3px;background:var(--chip);margin-top:10px}
 .chromebar.hid ~ .grabber{opacity:1;pointer-events:auto}
 
-/* 右上动作圆片 */
-.acts{position:absolute;top:112px;right:20px;z-index:20;display:flex;gap:8px}
-.ghost{
-  appearance:none;border:0;background:var(--chip);border-radius:8px;
-  height:48px;min-width:48px;font:inherit;font-size:14px;color:var(--ink);letter-spacing:-.016em;cursor:pointer;
-  padding:0 14px;transition:transform .18s var(--settle);
-}
-.ghost:active{transform:scale(.96)}
-.ghost:disabled{color:rgba(29,29,31,.4);cursor:default}
-
-/* 拖动教练提示 */
+/* 拖动教练提示（含下拉撤回教学） */
 .coach{
   position:absolute;top:170px;left:50%;transform:translateX(-50%);z-index:20;
   background:var(--chip);border-radius:50px;padding:7px 14px;pointer-events:none;
@@ -183,28 +174,21 @@ body{
 /* ── 视频板块（深色面） ───────────────── */
 .canvas-video{position:absolute;inset:0;background:#000}
 .canvas-video .poster{position:absolute;inset:0;opacity:.92}
-.vacts{position:absolute;top:52px;right:12px;z-index:20;display:flex;align-items:center;gap:8px;padding-top:0}
-.darkchip{
-  appearance:none;border:0;background:rgba(0,0,0,.4);border-radius:8px;
-  height:48px;min-width:48px;font:inherit;font-size:14px;color:rgba(255,255,255,.95);letter-spacing:-.016em;
-  cursor:pointer;padding:0 12px;transition:transform .18s var(--settle);
+/* 已标记指示（左上角红点圆牌，滑动标记后回看可辨） */
+.vmarked{
+  position:absolute;top:60px;left:12px;z-index:20;display:flex;align-items:center;gap:6px;
+  background:rgba(0,0,0,.5);border-radius:50px;padding:7px 12px;pointer-events:none;
+  font-size:13px;color:#fff;
 }
-.darkchip:disabled{color:rgba(255,255,255,.5);cursor:default}
-.darkchip:active{transform:scale(.96)}
-.mute{
-  appearance:none;border:0;background:rgba(0,0,0,.4);border-radius:50%;
-  width:44px;height:44px;display:flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:transform .18s var(--settle);
+.vmarked i{width:8px;height:8px;border-radius:50%;background:var(--danger)}
+/* 标记 Snackbar（左滑后短现，撤回可点） */
+.vsnack{
+  position:absolute;bottom:96px;left:50%;transform:translateX(-50%);z-index:24;
+  display:flex;align-items:center;gap:14px;border-radius:50px;padding:10px 16px;
+  background:rgba(229,229,234,.96);color:var(--ink);font-size:13.5px;white-space:nowrap;
+  box-shadow:0 4px 18px rgba(0,0,0,.25);
 }
-.mute:active{transform:scale(.94)}
-.vmark{
-  position:absolute;right:20px;bottom:56px;appearance:none;border:0;cursor:pointer;
-  background:var(--on-dark);color:#000;border-radius:50px;padding:11px 22px;
-  font:inherit;font-size:17px;transition:transform .18s var(--settle);
-  box-shadow:0 6px 24px rgba(0,0,0,.35);
-}
-.vmark:active{transform:scale(.95)}
-.vmark.off{background:rgba(255,255,255,.16);color:rgba(255,255,255,.85)}
+.vsnack u{color:var(--primary);font-weight:600;cursor:pointer;text-decoration:none}
 .vhint{position:absolute;bottom:64px;left:24px;z-index:20;font-size:12.5px;color:rgba(255,255,255,.72);letter-spacing:-.01em;pointer-events:none}
 /* 视频板：点按层 / 暂停指示 / 进度条 */
 .vtap{position:absolute;inset:0;cursor:pointer}
@@ -301,6 +285,7 @@ body{
 .slrow + .slrow{border-top:1px solid var(--divider-soft)}
 .slrow .rl{font-size:17px;letter-spacing:-.022em;width:56px;flex:none}
 .slrow .num{font-size:17px;color:var(--ink-strong);width:40px;text-align:right;flex:none;font-variant-numeric:tabular-nums}
+.slrow .num.tap{color:var(--blue);cursor:pointer}
 .slider{flex:1;position:relative;height:28px;display:flex;align-items:center;cursor:pointer}
 .slider .trk{width:100%;height:4px;border-radius:2px;background:var(--hairline)}
 .slider .fill{position:absolute;left:0;top:12px;height:4px;border-radius:2px;background:var(--blue)}
@@ -418,19 +403,15 @@ body{
         </div>
         <button class="grabber" id="grabber" aria-label="唤出顶栏"><i></i></button>
 
-        <div class="acts">
-          <button class="ghost" id="infobtn">信息</button>
-          <button class="ghost">撤回</button>
-        </div>
-
         <article class="photocard spring" id="card">
           <div class="img ph-1" id="cardimg"></div>
           <div class="dragbadge left" id="lbadge">删除</div>
           <div class="dragbadge right" id="rbadge">跳过</div>
+          <div class="dragbadge bottom" id="bbadge">撤回</div>
           <div class="count-chip" id="counter">3 / 20</div>
         </article>
 
-        <!-- 信息抽屉（点「信息」打开） -->
+        <!-- 信息抽屉（上滑打开） -->
         <div class="infosheet" id="infosheet" hidden>
           <div class="iscrim" id="iscrim"></div>
           <div class="isheet">
@@ -440,7 +421,7 @@ body{
           </div>
         </div>
 
-        <div class="coach" id="coach">拖我试试 · 左滑 = 标记删除</div>
+        <div class="coach" id="coach">拖我试试 · 左滑删除 · 下拉撤回</div>
         <div class="homebar"></div>
       </section>
 
@@ -458,17 +439,13 @@ body{
             <svg width="25" height="12" viewBox="0 0 25 12"><rect x="0.6" y="1" width="20" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2.6" y="3" width="14" height="6" rx="1.5" fill="currentColor"/><rect x="22.5" y="4" width="2" height="4" rx="1" fill="currentColor"/></svg>
           </span>
         </div>
-        <div class="vacts">
-          <button class="darkchip">撤回</button>
-          <button class="darkchip">信息</button>
-          <button class="mute" id="mute" aria-label="声音开关">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="#fff" stroke="none"/><path id="muteArc" d="M15.5 8.5a5 5 0 0 1 0 7"/><line x1="17" y1="9" x2="22" y2="15" style="display:none" id="muteSlash"/></svg>
-          </button>
-        </div>
-        <div class="vhint">上滑下一个 · 下滑上一个 · 点按暂停</div>
+        <div class="vmarked" id="vmarked" hidden><i></i>已标记</div>
+        <div class="dragbadge left" id="vlbadge">删除</div>
+        <div class="dragbadge right" id="vrbadge">保留</div>
+        <div class="vhint">左滑删除 · 右滑保留 · 长按信息</div>
         <div class="vtime" id="vtime">0:24 / 1:03</div>
         <div class="vbar" id="vbar"><div class="vfill" id="vfill"></div></div>
-        <button class="vmark" id="vmark">标记删除</button>
+        <div class="vsnack" id="vsnack" hidden>已标记第 1 个<u id="vundo">撤回</u></div>
         <div class="homebar"></div>
       </section>
 
@@ -541,10 +518,10 @@ body{
               <div class="row"><span class="rl">右滑</span><span class="val">跳过</span></div>
               <div class="row"><span class="rl">上滑</span><span class="val">查看信息</span></div>
             </div>
-            <div class="sect">每轮数量（1~300）</div>
+            <div class="sect">每轮数量（1~300 · 改动立即生效）</div>
             <div class="group">
-              <div class="slrow"><span class="rl">照片</span><div class="slider"><div class="trk"></div><div class="fill" style="width:31%"></div><div class="th" style="left:31%"></div></div><span class="num">20</span></div>
-              <div class="slrow"><span class="rl">视频</span><div class="slider"><div class="trk"></div><div class="fill" style="width:20%"></div><div class="th" style="left:20%"></div></div><span class="num">10</span></div>
+              <div class="slrow"><span class="rl">照片</span><div class="slider"><div class="trk"></div><div class="fill" style="width:31%"></div><div class="th" style="left:31%"></div></div><span class="num tap" title="点按直接输入">20</span></div>
+              <div class="slrow"><span class="rl">视频</span><div class="slider"><div class="trk"></div><div class="fill" style="width:20%"></div><div class="th" style="left:20%"></div></div><span class="num tap" title="点按直接输入">10</span></div>
             </div>
             <div class="sect">图片板块</div>
             <div class="group">
@@ -557,10 +534,6 @@ body{
               <div class="checkrow"><span class="rl">大文件优先</span></div>
               <div class="checkrow"><span class="rl">最新优先</span></div>
               <div class="checkrow"><span class="rl">最早优先</span></div>
-            </div>
-            <div class="sect">视频标记停留</div>
-            <div class="group">
-              <div class="slrow"><div class="slider"><div class="trk"></div><div class="fill" style="width:40%"></div><div class="th" style="left:40%"></div></div><span class="num" style="width:64px">800ms</span></div>
             </div>
             <div class="sect">永久删除</div>
             <div class="group">
@@ -618,6 +591,7 @@ body{
   var coach = document.getElementById('coach');
   var lbadge = document.getElementById('lbadge');
   var rbadge = document.getElementById('rbadge');
+  var bbadge = document.getElementById('bbadge');
   function apply(){ var p = photos[idx];
     cardimg.className = 'img ' + p.cls;
     counter.textContent = seen + ' / ' + total;
@@ -635,18 +609,28 @@ body{
     if(!dragging) return;
     dx = e.clientX - sx; dy = e.clientY - sy;
     if(Math.abs(dx)+Math.abs(dy) > 6) moved = true;
-    /* 跟手 16% + 倾斜 + 方向浮标渐显（与 App 一致） */
+    /* 跟手 16% + 倾斜 + 方向浮标渐显（与 App 一致；底缘 = 下拉撤回） */
     card.style.transform = 'translate(' + (dx*0.16) + 'px,' + (dy*0.16) + 'px) rotate(' + (dx*0.16*0.12) + 'deg)';
     if (lbadge) lbadge.style.opacity = Math.max(0, Math.min(1, (-dx - 90) / 80));
     if (rbadge) rbadge.style.opacity = Math.max(0, Math.min(1, (dx - 90) / 80));
+    if (bbadge) bbadge.style.opacity = Math.max(0, Math.min(1, (dy - 60) / 80));
   });
+  /* 下拉撤回：回看上一张（连续拉 = 连续回退） */
+  function undoRecall(){
+    if(seen > 1) seen--;
+    idx = (idx - 1 + photos.length) % photos.length;
+    apply();
+  }
   function release(){
     if(!dragging) return; dragging=false;
     card.classList.add('spring'); card.style.transform='';
     if (lbadge) lbadge.style.opacity = 0;
     if (rbadge) rbadge.style.opacity = 0;
+    if (bbadge) bbadge.style.opacity = 0;
     if(moved && !coached){ coached=true; coach.classList.add('bye'); }
     if(dx <= -90){ markExit(); }          /* 左滑 = 标记删除 → 退场换卡 */
+    else if(dy <= -90){ openInfo(); }     /* 上滑 = 信息抽屉（与 App 手势一致） */
+    else if(dy >= 90){ undoRecall(); }    /* 下拉 = 撤回上一张 */
     else if(!moved){ chrome.classList.toggle('hid'); } /* 点按 = 切换顶栏 */
     dx=0; dy=0;
   }
@@ -667,35 +651,68 @@ body{
     }, 340);
   }
 
-  /* ── 信息抽屉（「信息」圆片打开；遮罩点击关闭） ── */
-  var infobtn = document.getElementById('infobtn');
+  /* ── 信息抽屉（上滑打开；遮罩点击关闭） ── */
   var infosheet = document.getElementById('infosheet');
   var irows = [
     ['拍摄时间','2026-05-21 09:34'],['尺寸','4080 × 3060'],['文件大小','3.4 MB'],
     ['分辨率','1248 万像素'],['所在目录','DCIM/Camera/'],['设备型号','vivo S17 Pro']
   ];
-  if (infobtn) infobtn.addEventListener('click', function(){
+  function openInfo(){
     document.getElementById('ithumb').className = 'ithumb ' + photos[idx].cls;
     document.getElementById('irows').innerHTML = irows.map(function(r){
       return '<div class="irow"><span class="l">' + r[0] + '</span><span style="flex:1"></span><span class="v">' + r[1] + '</span></div>';
     }).join('');
     infosheet.hidden = false;
-  });
+  }
   document.getElementById('iscrim').addEventListener('click', function(){ infosheet.hidden = true; });
 
-  /* ── 视频板 ── */
-  var mute = document.getElementById('mute');
-  if (mute) mute.addEventListener('click', function(){
-    var s = document.getElementById('muteSlash'); var a = document.getElementById('muteArc');
-    var off = s.style.display !== 'none';
-    s.style.display = off ? 'none' : '';
-    a.style.display = off ? '' : 'none';
-  });
-  var vmark = document.getElementById('vmark');
-  if (vmark) vmark.addEventListener('click', function(){
-    var off = vmark.classList.toggle('off');
-    vmark.textContent = off ? '取消标记' : '标记删除';
-  });
+  /* ── 视频板：左滑标记 / 右滑保留（拖动浮标 + Snackbar 撤回）；suppressTap 防拖动后的 up 触发暂停 ── */
+  var suppressTap = false;
+  var vmarkDrag = (function(){
+    var vtap = document.getElementById('vtap');
+    var vmarked = document.getElementById('vmarked');
+    var vlbadge = document.getElementById('vlbadge');
+    var vrbadge = document.getElementById('vrbadge');
+    var vsnack = document.getElementById('vsnack');
+    var vundo = document.getElementById('vundo');
+    var vcount = 0, vsnackTimer = null;
+    var dragging = false, sx = 0, dx = 0;
+    vtap.addEventListener('pointerdown', function(e){
+      dragging = true; dx = 0; sx = e.clientX;
+      try{ vtap.setPointerCapture(e.pointerId); }catch(_){}
+    });
+    vtap.addEventListener('pointermove', function(e){
+      if(!dragging) return;
+      dx = e.clientX - sx;
+      /* 横向浮标渐显（左删红 / 右留白，与 App 一致） */
+      if (vlbadge) vlbadge.style.opacity = Math.max(0, Math.min(1, (-dx - 90) / 80));
+      if (vrbadge) vrbadge.style.opacity = Math.max(0, Math.min(1, (dx - 90) / 80));
+    });
+    function release(){
+      if(!dragging) return; dragging = false;
+      if (vlbadge) vlbadge.style.opacity = 0;
+      if (vrbadge) vrbadge.style.opacity = 0;
+      if (Math.abs(dx) > 12) suppressTap = true; /* 拖动后的 up 不触发暂停 */
+      if (dx <= -90) markVideo();
+      /* 右滑 = 保留（预览无序列推进，视觉无变化） */
+      dx = 0;
+    }
+    vtap.addEventListener('pointerup', release);
+    vtap.addEventListener('pointercancel', release);
+    function markVideo(){
+      vmarked.hidden = false;
+      vcount++;
+      vsnack.firstChild.nodeValue = '已标记第 ' + vcount + ' 个';
+      vsnack.hidden = false;
+      clearTimeout(vsnackTimer);
+      vsnackTimer = setTimeout(function(){ vsnack.hidden = true; }, 3000);
+    }
+    if (vundo) vundo.addEventListener('click', function(){
+      vmarked.hidden = true;
+      if (vcount > 0) vcount--;
+      vsnack.hidden = true;
+    });
+  })();
 
   /* ── 视频板：进度条 / 暂停指示（点按切换，进度自动走） ── */
   var vt = {sec: 24, dur: 63, paused: false};
@@ -709,7 +726,10 @@ body{
     if (!vt.paused && !document.querySelector('[data-view="video"]').classList.contains('on')) return;
     if (!vt.paused){ vt.sec = (vt.sec + 1) % vt.dur; vrender(); }
   }, 1000);
-  document.getElementById('vtap').addEventListener('click', function(){ vt.paused = !vt.paused; vrender(); });
+  document.getElementById('vtap').addEventListener('click', function(){
+    if (suppressTap) { suppressTap = false; return; }
+    vt.paused = !vt.paused; vrender();
+  });
   var vbar = document.getElementById('vbar');
   vbar.addEventListener('pointerdown', function(e){
     var r = vbar.getBoundingClientRect();

@@ -88,22 +88,6 @@ class SettingsTest {
         SettingsRepository.requireRoundSize(301)
     }
 
-    @Test
-    fun `requireDwellMs 边界内通过`() {
-        assertEquals(0, SettingsRepository.requireDwellMs(0))
-        assertEquals(2000, SettingsRepository.requireDwellMs(2000))
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `requireDwellMs -1 抛 IAE`() {
-        SettingsRepository.requireDwellMs(-1)
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `requireDwellMs 2001 抛 IAE`() {
-        SettingsRepository.requireDwellMs(2001)
-    }
-
     // —— 每轮数量缺省（PRD §4.4：图片三板块 20 / 视频 10）——
 
     @Test

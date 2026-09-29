@@ -21,8 +21,10 @@ sealed interface SessionAction {
     data class Skip(val id: MediaKey) : SessionAction
 }
 
-/** 板块会话：排序快照上的轮次推进 + 栈式撤回。main 单写者（架构 §2 并发约定）。 */
-class BoardSession(idOrder: List<MediaKey>, val roundSize: Int) {
+/** 板块会话：排序快照上的轮次推进 + 栈式撤回。main 单写者（架构 §2 并发约定）。
+ *  每轮数量可热调（updateRoundSize）：设置「每轮数量」轮内立即生效、不重建会话（标记/撤回栈保留）；
+ *  缩到已消耗值以内 → 本轮随即结束；轮末再放大 → 本轮继续。排序快照仍不可变（换排序 = 新会话）。 */
+class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
 
     init {
         require(roundSize in 1..300) { "roundSize 必须在 1..300，实际 $roundSize" }
@@ -36,6 +38,16 @@ class BoardSession(idOrder: List<MediaKey>, val roundSize: Int) {
 
     /** 本轮起点下标（startNewRound 前移到 pointer，不回拨）；本轮已消耗 = pointer - roundStart。 */
     private var roundStart = 0
+
+    /** 本轮条数（热调口 updateRoundSize；轮末判定 = 恰好消耗 roundSize 条）。 */
+    var roundSize: Int = roundSize
+        private set
+
+    /** 每轮数量热调（设置「每轮数量」当前轮立即生效；startNewRound 沿用新值）。 */
+    fun updateRoundSize(size: Int) {
+        require(size in 1..300) { "roundSize 必须在 1..300，实际 $size" }
+        roundSize = size
+    }
 
     /** 撤回栈元素：动作 + 动作发生时的指针 —— 撤销 = 拨回该处（其后的普通 advance 一并回退）。 */
     private class Frame(val action: SessionAction, val at: Int)

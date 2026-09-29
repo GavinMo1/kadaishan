@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.map
 /** 唯一 settings DataStore 实例（文件名 "settings"；Preferences DataStore，架构 §2 配置清单）。 */
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-/** 设置持久化（架构 §2 配置清单 5 组 key）：手势映射 / 分板块每轮数量 / 排序 / 视频标记停留 / 永久删除解锁标志。
+/** 设置持久化（架构 §2 配置清单 4 组 key）：手势映射 / 分板块每轮数量 / 排序 / 永久删除解锁标志 + 图片板块模式。
  *  标记与分组不落盘；边界校验见伴生对象纯函数。 */
 class SettingsRepository(context: Context) {
 
@@ -40,11 +40,6 @@ class SettingsRepository(context: Context) {
     /** 排序策略；缺省/坏数据回 SortSpec.Random。 */
     val sortStrategy: Flow<SortSpec> = dataStore.data.map { prefs ->
         parseSortStrategy(prefs[KEY_SORT])
-    }
-
-    /** 视频标记停留毫秒；缺省 800（PRD §4.2）。 */
-    val videoDwellMs: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_DWELL_MS] ?: DEFAULT_DWELL_MS
     }
 
     /** 「立即永久删除」解锁标志（PRD §4.6：2026-09-27 用户拍板默认已解锁，找回演练降为建议路径）。缺省 true。 */
@@ -70,11 +65,6 @@ class SettingsRepository(context: Context) {
         dataStore.edit { it[KEY_SORT] = encodeSortStrategy(s) }
     }
 
-    suspend fun setVideoDwellMs(ms: Int) {
-        val checked = requireDwellMs(ms)
-        dataStore.edit { it[KEY_DWELL_MS] = checked }
-    }
-
     suspend fun setImageBoardsMerged(merged: Boolean) {
         dataStore.edit { it[KEY_IMAGE_BOARDS_MERGED] = merged }
     }
@@ -84,11 +74,8 @@ class SettingsRepository(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_DWELL_MS = 800
-
         private val KEY_GESTURE = stringSetPreferencesKey("gesture_mapping")
         private val KEY_SORT = stringPreferencesKey("sort_strategy")
-        private val KEY_DWELL_MS = intPreferencesKey("video_dwell_ms")
         private val KEY_PERM_UNLOCKED = booleanPreferencesKey("permanent_delete_unlocked")
         private val KEY_IMAGE_BOARDS_MERGED = booleanPreferencesKey("image_boards_merged")
         private fun roundSizeKey(board: Board): Preferences.Key<Int> =
@@ -105,12 +92,6 @@ class SettingsRepository(context: Context) {
         fun requireRoundSize(size: Int): Int {
             require(size in 1..300) { "每轮数量须在 1..300：$size" }
             return size
-        }
-
-        /** 视频标记停留边界（0..2000ms）；越界抛 IllegalArgumentException。 */
-        fun requireDwellMs(ms: Int): Int {
-            require(ms in 0..2000) { "视频标记停留须在 0..2000ms：$ms" }
-            return ms
         }
 
         /** 持久化编码："LEFT=MARK_DELETE" 形式 stringSet。 */

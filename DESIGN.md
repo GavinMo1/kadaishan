@@ -160,7 +160,7 @@ components:
 - **hairline 灰**（#E0E0E0）：1px hairline 描边/分隔（卡片描边、chrome 边框、Switch 未选轨、抽屉把手）。
 - **软分隔灰**（#F0F0F0）：行间分隔线、分段页签轨、Spinner 轨、软环。
 - **勾选环灰**（#C7C7CC）：圆环勾选未选态描边。
-- **黑透圆牌**（#D2D2D7 @64%）：照片影像面上的半透圆牌（文件名牌、计数牌、GhostChip 底），墨色字。
+- **黑透圆牌**（#D2D2D7 @64%）：照片影像面上的半透圆牌（计数牌、首卡手势提示底），墨色字。
 - **悬浮 chrome 白**（#FFFFFF @80%）：悬浮板块栏底，内容全幅、chrome 退后。
 
 ### Dark surface（视频板专用）
@@ -187,7 +187,6 @@ components:
 - **Body**（400，17sp / 25sp 行高，-0.022em）：正文主档，iOS body 尺寸。
 - **Body-medium**（400，14sp，-0.016em）：说明文字、次级键、圆片标签、行间辅助。
 - **Label**（400，12sp，-0.01em）：最小档（SectionLabel 13sp 为其在分组标题处的近邻用法）。
-- **水印大字**（600，24sp，-0.011em）：视频板"已标记删除"停留水印，一次性用法。
 
 ### Named Rules
 
@@ -228,12 +227,12 @@ components:
 
 ## Components
 
-组件唯一定义点：`ui/kit/DesignKit.kt`。全部交互件：按压 scale(0.95)（ghost 0.96）系统级微交互、无 ripple indication、minTouch 48dp。
+组件唯一定义点：`ui/kit/DesignKit.kt`。全部交互件：按压 scale(0.95) 系统级微交互、无 ripple indication、minTouch 48dp。
 
 ### Buttons
 
 - **Shape:** 药丸主键 pill（50dp）；浅底次级键 11dp 圆角矩形。
-- **Primary（PillButton）:** Action Blue 底 + 白字 17sp/400，内距 22×11dp；深底变体 = 白底黑字（视频板主键）；危险变体（DangerPillButton）= danger 红底白字，只用于永久删除。
+- **Primary（PillButton）:** Action Blue 底 + 白字 17sp/400，内距 22×11dp；深底变体 = 白底黑字（视频板终态动作）；危险变体（DangerPillButton）= danger 红底白字，只用于永久删除。
 - **Pressed:** 整体 scale(0.95)；禁用 = 底色 35% 透明度。
 - **Secondary（PearlButton）:** pearl 底 + 1.5dp dividerSoft 软环 + ink-strong 字 14sp/-0.016em，11dp 圆角，内距 14×8dp。
 - **On-dark（OnDarkButton）:** 白 @14% 半透底 + 白字，pill，视频板终态次级动作。
@@ -241,10 +240,10 @@ components:
 
 ### Chips / 圆片
 
-- **GhostChip（浅媒体面）:** 黑透圆牌底（#D2D2D7 @64%）+ 墨字 14sp，8dp 圆角，照片板"信息/撤回"。
-- **DarkChip（深媒体面）:** 黑 @40% + 白字 @95%，8dp 圆角，视频板右上角组。
 - **媒体圆牌:** 仅"N / M"计数 pill 牌（贴卡底中）；文件名圆牌已移除——卡面只留影像，文件信息全走信息抽屉。
-- **State:** 禁用 = 文字降透明度（40–50%），撤回不可用时置灰不隐藏。
+- **DragHintBadge（手势浮标，浅/深媒体面通用）:** pill 底 + 15sp/600，随拖动进度渐显（14px 起步 26px 满显）+ 跟手倾斜（纵向用不倾斜）；图片板按手势映射取色（删除 danger / 跳过白底墨 / 信息 Action Blue / 底缘撤回白底墨），视频板固定左「删除」红、右「保留」白。
+- **已标记指示（视频板）:** 左上角黑透 pill + 8dp danger 红点 + 白字 13sp「已标记」——滑动标记后回看可辨的唯一信号。
+- **零角标原则:** 图片/视频卡面不设任何常驻角标按钮（信息走手势：图片上滑 / 视频长按；撤回走图片下拉 / 视频 Snackbar；视频恒静音）。
 
 ### Cards / Containers
 

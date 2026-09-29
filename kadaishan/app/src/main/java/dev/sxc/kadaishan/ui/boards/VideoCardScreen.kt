@@ -4,23 +4,24 @@ import android.graphics.Matrix
 import android.view.TextureView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,8 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
@@ -62,7 +61,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -72,6 +70,7 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
 import dev.sxc.kadaishan.ui.kit.Daylight
+import dev.sxc.kadaishan.ui.kit.DragHintBadge
 import dev.sxc.kadaishan.ui.kit.InfoSheet
 import dev.sxc.kadaishan.ui.kit.OnDarkButton
 import dev.sxc.kadaishan.ui.kit.PillButton
@@ -89,14 +88,18 @@ import dev.sxc.kadaishan.ui.settle.SettlementPanel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 
-// ═══ 视频板块（PRD §4.2 抖音式：全屏播放 + 标记交互；media3 播放核心单实例归本文件）═══
+// ═══ 视频板块（PRD §4.2 抖音式：全屏播放 + 滑动标记；media3 播放核心单实例归本文件）═══
 // 全屏播放：单 ExoPlayer（VideoCardViewModel 持有，onCleared 释放）+ TextureView surface，
-//  滑入自动播放、默认静音、点按暂停/继续（点按层与删除按钮 overlay 分离）；
+//  滑入自动播放、默认静音、点按暂停/继续（点按层与其它 overlay 分离）；
 // 首帧海报（AsyncImage + coil-video VideoFrameDecoder，model = item.uri）作底图：
 //  surface 未就绪 / 坏文件 / 加载中均透出海报，不黑屏。
-// 上/下滑固定导航（不读 gestureMapping），手势须从内侧起始区开始（禁边缘手势）；
-// 删除按钮与手势区分离；右上角 撤回 + 信息 + 小喇叭；顶层 inset 补偿由 MainActivity/AppRoot 统一做。
+// 手势：左滑 = 标记删除（已标记卡再左滑 = 取消标记）+ 前进；右滑 = 保留 + 前进；上/下滑 = 下/上一个；
+//  点按 = 暂停/继续，长按 = 信息抽屉（纵向手势被翻页占用，信息的隐藏入口）；恒静音（无声开关）。
+//  横向 = 标记语汇（与图片板一致），纵向 = 翻页导航（抖音式）；标记成功发 Snackbar「已标记第 N 个 · 撤回」。
+//  进度条带内横向拖动 = seek（子层消费优先，父层手势自动取消）；带外横向滑动 = 标记手势。
+// 已标记卡左上角红点圆牌（回看可辨）；顶层 inset 补偿由 MainActivity/AppRoot 统一做。
 
 /** 视频板块契约签名（宿主 MainActivity 按位置调用）。 */
 @Composable
@@ -127,19 +130,27 @@ fun VideoCardScreen(
     val permanentAllowed by settings.permanentDeleteUnlocked.collectAsState(initial = true)
     // 换卡方向（转场用）：上滑下一个 = 新卡自底入，下滑回看 = 自顶入
     var navDir by remember { mutableStateOf(1) }
+    // 换卡轴：true = 横向（左删/右留，与图片板同语汇），false = 纵向（翻页导航）
+    var navAxis by remember { mutableStateOf(false) }
     val reducedMotion = rememberReducedMotion()
+    // 横向拖动浮标跟手（画面本体不位移：播放中平移画面观感撕裂，浮标渐显已足够反馈）
+    var followXTarget by remember { mutableStateOf(0f) }
+    val followX by animateFloatAsState(
+        targetValue = followXTarget,
+        animationSpec = if (reducedMotion) snap() else Daylight.settle(),
+        label = "vFollowX",
+    )
     // M4：轮末自动弹结算（含 0 标记 → 面板空态「本轮无删除项」）；面板关闭后轮末屏留「查看结算」重入口
     LaunchedEffect(vm.roundEnded, vm.currentId) {
         if (vm.roundEnded && vm.currentId == null) settlementOpen = true
     }
 
-    // 进入 → 恢复播放；离开 → 停播 + 卸 surface + 取消 dwell 计时（会话状态按进程存活期保留）
+    // 进入 → 恢复播放；离开 → 停播 + 卸 surface（会话状态按进程存活期保留）
     DisposableEffect(Unit) {
         vm.onScreenVisible()
         onDispose {
             vm.onScreenPaused()
             vm.attachSurface(null)
-            vm.cancelDwell()
         }
     }
 
@@ -175,41 +186,66 @@ fun VideoCardScreen(
                 // 手势热路径零分配：阈值/边界仅在进入时算一次，拖动只累加标量
                 val edgePx = 24.dp.toPx()
                 val thresholdPx = 56.dp.toPx()
-                var total = 0f
+                var totalX = 0f
+                var totalY = 0f
                 var valid = false
-                detectVerticalDragGestures(
+                detectDragGestures(
                     onDragStart = { offset ->
-                        total = 0f
+                        totalX = 0f
+                        totalY = 0f
                         // 起点必须在内侧起始区（四边各留 24dp，禁边缘手势）
                         valid = offset.x >= edgePx && offset.x <= size.width - edgePx &&
                             offset.y >= edgePx && offset.y <= size.height - edgePx
                     },
-                    onVerticalDrag = { _, dragAmount ->
-                        if (valid) total += dragAmount
+                    onDrag = { _, dragAmount ->
+                        if (valid) {
+                            totalX += dragAmount.x
+                            totalY += dragAmount.y
+                            // 浮标跟手（16% 截幅）；进度条带内横向拖动被子层 seek 消费 → 本层手势自动取消，不误标
+                            followXTarget = (totalX * 0.16f).coerceIn(-72f, 72f)
+                        }
                     },
                     onDragEnd = {
                         if (valid && !vm.infoOpen) {
-                            when {
-                                total <= -thresholdPx -> { navDir = 1; vm.next(); haptics.tick(); onInteract() }   // 上滑 = 下一个
-                                total >= thresholdPx -> { navDir = -1; vm.prev(); haptics.tick(); onInteract() }  // 下滑 = 上一个
+                            if (abs(totalX) >= abs(totalY)) {
+                                // 横向 = 标记语汇（与图片板一致：左删右留）
+                                when {
+                                    totalX <= -thresholdPx -> { navAxis = true; navDir = -1; haptics.confirm(); vm.markCurrentAndAdvance(); onInteract() }
+                                    totalX >= thresholdPx -> { navAxis = true; navDir = 1; haptics.tick(); vm.next(); onInteract() }
+                                }
+                            } else {
+                                // 纵向 = 翻页导航（抖音式）
+                                when {
+                                    totalY <= -thresholdPx -> { navAxis = false; navDir = 1; haptics.tick(); vm.next(); onInteract() }   // 上滑 = 下一个
+                                    totalY >= thresholdPx -> { navAxis = false; navDir = -1; haptics.tick(); vm.prev(); onInteract() }  // 下滑 = 上一个
+                                }
                             }
                         }
                         valid = false
+                        followXTarget = 0f
                     },
                     onDragCancel = {
                         valid = false
-                        total = 0f
+                        totalX = 0f
+                        totalY = 0f
+                        followXTarget = 0f
                     },
                 )
             },
     ) {
         // ① 首帧海报（底图：surface 未就绪 / 坏文件 / 加载中兜底；与画面同为等比 Fit）
-        // 换卡垂直转场：surface 单实例不动，海报层随 navDir 滑入滑出（surface 透明期海报即转场画面）
+        // 换卡转场：surface 单实例不动，海报层随导航方向滑入滑出（surface 透明期海报即转场画面）；
+        // 横向（左删右留，图片板同语汇）/ 纵向（翻页导航）按触发手势取轴
         AnimatedContent(
             targetState = currentId,
             transitionSpec = {
                 if (reducedMotion) {
                     fadeIn(snap()) togetherWith fadeOut(snap())
+                } else if (navAxis) {
+                    (slideInHorizontally(Daylight.spatial()) { w -> navDir * -w / 4 } + fadeIn(Daylight.settle()))
+                        .togetherWith(
+                            slideOutHorizontally(Daylight.spatial()) { w -> navDir * w / 3 } + fadeOut(Daylight.settle()),
+                        )
                 } else {
                     (slideInVertically(Daylight.spatial()) { h -> navDir * h / 3 } + fadeIn(Daylight.settle()))
                         .togetherWith(
@@ -316,17 +352,25 @@ fun VideoCardScreen(
             }
         }
 
-        // ④ 点按层：播放区点按 = 暂停/继续（删除按钮/撤回/信息等上层先命中并消费自身点击 → 不触发暂停）
+        // ④ 点按层：点按 = 暂停/继续；长按 = 信息抽屉（视频板纵向手势被翻页占用，信息的隐藏入口）
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .pointerInput(vm) {
-                    detectTapGestures {
-                        if (!vm.infoOpen) {
-                            haptics.tap()
-                            vm.togglePlayPause()
-                        }
-                    }
+                    detectTapGestures(
+                        onTap = {
+                            if (!vm.infoOpen) {
+                                haptics.tap()
+                                vm.togglePlayPause()
+                            }
+                        },
+                        onLongPress = {
+                            if (!vm.infoOpen) {
+                                haptics.tap()
+                                vm.infoOpen = true
+                            }
+                        },
+                    )
                 },
         )
 
@@ -349,80 +393,44 @@ fun VideoCardScreen(
             }
         }
 
-        // ③ 右上角 chrome（黑透圆片系，压任意海报都可读；撤回 false 置灰）
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 8.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            DarkChip(text = "撤回", onClick = vm::undoMark, enabled = vm.undoAvailable)
-            Spacer(modifier = Modifier.width(8.dp))
-            DarkChip(text = "信息", onClick = { vm.infoOpen = !vm.infoOpen })
-            Spacer(modifier = Modifier.width(8.dp))
-            // 右上角小喇叭：默认静音 → 点开出声（黑透圆片 + 语义描述）
-            Box(
+        // ③ 已标记指示（左上角红点圆牌）：按钮退役后回看可辨的唯一标记态信号
+        if (currentId != null && currentId in vm.markedIds) {
+            Row(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.4f))
-                    .clickable { vm.toggleMute() },
-                contentAlignment = Alignment.Center,
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(top = 8.dp, start = 12.dp)
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
+                    .background(Daylight.surfaceBlack.copy(alpha = 0.5f))
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = if (vm.muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                    contentDescription = if (vm.muted) "开声音" else "关声音",
-                    tint = Daylight.onDark,
-                    modifier = Modifier.size(20.dp),
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(Daylight.danger),
                 )
-            }
-        }
-
-        // ④ 「已标记删除」水印（停留期间显示于当前卡）+ 常驻计数（PRD §4.2 水印+计数）
-        if (vm.dwellActive && vm.dwellId != null && vm.dwellId == currentId) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(Daylight.radiusLg))
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.72f))
-                    .padding(horizontal = 26.dp, vertical = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "已标记删除",
+                    text = "已标记",
                     color = Daylight.onDark,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = (-0.011).em,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "已标记 ${vm.markedCount} 项",
-                    color = Daylight.onDark.copy(alpha = 0.85f),
-                    style = MaterialTheme.typography.titleMedium,
+                    fontSize = 13.sp,
                 )
             }
         }
 
-        // ⑤ 删除按钮（toggle；与手势区分离，右下角；白色药丸 = 视频板的主键）
-        PillButton(
-            text = if (currentId != null && currentId in vm.markedIds) "取消标记" else "标记删除",
-            onClick = {
-                val willMark = currentId != null && currentId !in vm.markedIds
-                if (willMark) haptics.confirm() else haptics.reject()
-                vm.toggleMark()
-            },
-            enabled = currentId != null,
-            container = Daylight.onDark,
-            content = Daylight.surfaceBlack,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .statusBarsPadding()
-                .padding(end = 20.dp, bottom = 36.dp),
+        // ④.5 横向拖动浮标（左删右留，与图片板同色语义；渐显即手势教学）
+        DragHintBadge(
+            text = "删除", bg = Daylight.danger, fg = Daylight.onPrimary, side = -1, follow = { followX },
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 20.dp),
+        )
+        DragHintBadge(
+            text = "保留", bg = Daylight.canvas, fg = Daylight.inkStrong, side = 1, follow = { followX },
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp),
         )
 
-        // ⑤.5 底部进度条（画面之上、手势条余量内；横向拖动 seek，不影响上下滑翻页）
+        // ⑤ 底部进度条（画面之上、手势条余量内；横向拖动 seek，不影响上下滑翻页）
         if (currentId != null) {
             VideoScrubber(
                 positionMs = vm.positionMs,
@@ -449,7 +457,7 @@ fun VideoCardScreen(
                     .padding(horizontal = 14.dp, vertical = 7.dp),
             ) {
                 Text(
-                    text = "上滑下一个 · 下滑上一个 · 点按暂停",
+                    text = "左滑删除 · 右滑保留 · 长按信息",
                     color = Daylight.onDark,
                     fontSize = 13.sp,
                 )
@@ -586,30 +594,6 @@ private fun VideoScrubber(
                 )
             }
         }
-    }
-}
-
-/** 深色媒体面上的文字圆片：黑 @40% + 白字（压任意海报可读），radiusSm。 */@Composable
-private fun DarkChip(
-    text: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-) {
-    Box(
-        modifier = Modifier
-            .defaultMinSize(minHeight = 48.dp)
-            .clip(RoundedCornerShape(Daylight.radiusSm))
-            .background(Daylight.surfaceBlack.copy(alpha = if (enabled) 0.4f else 0.2f))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = Daylight.onDark.copy(alpha = if (enabled) 0.95f else 0.5f),
-            fontSize = 14.sp,
-            letterSpacing = (-0.016).em,
-        )
     }
 }
 

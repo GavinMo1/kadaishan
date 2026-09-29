@@ -137,6 +137,50 @@ class BoardSessionTest {
     }
 
     @Test
+    fun `updateRoundSize 热生效：放大继续、缩到已耗值以内立即轮末、轮末放大复活本轮`() {
+        val s = BoardSession(ids(9), 5)
+        s.mark(1L)
+        s.skip(2L)
+        s.advance() // 已消耗 3
+
+        s.updateRoundSize(8) // 放大：本轮继续
+        assertFalse(s.roundEnded())
+        assertEquals(4L, s.current!!)
+        assertEquals(8, s.roundSize)
+
+        s.updateRoundSize(3) // 缩到已消耗值：本轮立即结束（不超额）
+        assertTrue(s.roundEnded())
+        assertNull(s.current)
+        assertEquals(3, s.consumed)
+
+        s.updateRoundSize(6) // 轮末再放大：本轮继续（消耗护栏 == 判定成立）
+        assertFalse(s.roundEnded())
+        assertEquals(4L, s.current!!)
+        assertEquals(6, s.roundSize)
+
+        assertThrows(IllegalArgumentException::class.java) { s.updateRoundSize(0) }
+        assertThrows(IllegalArgumentException::class.java) { s.updateRoundSize(301) }
+        assertEquals(6, s.roundSize) // 非法值不改现值
+    }
+
+    @Test
+    fun `startNewRound 沿用热调后的 roundSize 且标记撤回栈保留到收尾`() {
+        val s = BoardSession(ids(6), 5)
+        s.mark(1L)
+        s.updateRoundSize(2)
+        s.skip(2L) // 已消耗 2 = 热调后的轮值 → 轮末（标记 1 保留）
+        assertTrue(s.roundEnded())
+        assertEquals(listOf(1L), s.markedIds.toList())
+
+        s.startNewRound() // 新轮沿用 roundSize=2
+        assertEquals(2, s.roundSize)
+        s.advance()
+        assertFalse(s.roundEnded()) // 1 条 ≠ 2 条
+        s.advance()
+        assertTrue(s.roundEnded())
+    }
+
+    @Test
     fun `roundEnded is exact at roundSize`() {
         val s = BoardSession(ids(4), 2)
 

@@ -26,22 +26,22 @@ import dev.sxc.kadaishan.model.MediaQuery
 import dev.sxc.kadaishan.model.SortSpec
 import dev.sxc.kadaishan.model.VisibleScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-// ═══ 视频板状态持有者（PRD §4.2 抖音式删视频；架构 §2 状态归属表：视频水印/Snackbar/计数 = 本类 dwell 计时器）═══
+// ═══ 视频板状态持有者（PRD §4.2 抖音式删视频；架构 §2 状态归属表：视频 Snackbar/计数 = 本类）═══
 //
 // 导航模型（视频板自维护回看，与 BoardSession 兼容）：
 //  · visited + viewIndex = 当前显示 visited[viewIndex]；
-//  · 上滑：viewIndex < lastIndex → ++；否则取 session.current（null：roundEnded→轮末态 / 否则→空态），
+//  · 上滑 / 右滑（保留）：viewIndex < lastIndex → ++；否则取 session.current（null：roundEnded→轮末态 / 否则→空态），
 //    advance() 消耗、visited 追加、viewIndex 移到末尾；
 //  · 下滑：viewIndex--（到头无效）；回看不产生新条目、不碰 session；
 //  · 池尽判据：session.current == null && !session.roundEnded()。
-// 删除按钮 = 完整 toggle（任何可见卡含回看）：id ∈ markedIds → unmark（无停留）；否则 mark →
-//  停留 videoDwellMs 显示水印/计数，随后按 mark 分支自动跳下一个；dwell 计时在本类协程，取消安全。
+// 左滑 = 标记删除并随滑动前进（已标记卡再左滑 = 取消标记，toggle）；标记成功发 Snackbar「已标记第 N 个 · 撤回」
+//  （撤回 = unmark 该 id；深撤回走「下滑回看 + 再左滑取消」，无按钮）。恒静音（无声开关）。
+//  可见卡必在已展示窗口内（fetchNext 时已消耗）→ session.mark 走回看分支：纯状态标记，指针/轮计数不动。
 // main 单写者（架构 §2 并发约定）；本类不持久化（进程存活期）。
 
 class VideoCardViewModel(
@@ -74,10 +74,6 @@ class VideoCardViewModel(
     var markedIds by mutableStateOf<Set<MediaKey>>(emptySet())
         private set
 
-    /** 撤回按钮可用（镜像会话撤回栈深度；false 置灰）。 */
-    var undoAvailable by mutableStateOf(false)
-        private set
-
     /** = session.roundEnded() 快照（past-end 时区分轮末态/空态）。 */
     var roundEnded by mutableStateOf(false)
         private set
@@ -90,20 +86,9 @@ class VideoCardViewModel(
     var currentRoundSize by mutableStateOf(SettingsRepository.defaultRoundSize(Board.VIDEO))
         private set
 
-    /** dwell 水印：标记停留中（dwellId = 被标记卡）。 */
-    var dwellActive by mutableStateOf(false)
-        private set
-
-    var dwellId by mutableStateOf<MediaKey?>(null)
-        private set
-
     var infoOpen by mutableStateOf(false)
 
     var snack by mutableStateOf<SnackEvent?>(null)
-        private set
-
-    /** 声音开关（PRD §4.2 默认静音；右上角小喇叭切换）。 */
-    var muted by mutableStateOf(true)
         private set
 
     /** 播放中（false = 暂停/未起播 → UI 中央播放指示；缓冲态由 buffering 单列）。 */
@@ -132,7 +117,6 @@ class VideoCardViewModel(
 
     private var session: BoardSession? = null
     private var sort: SortSpec = SortSpec.Random
-    private var dwellMs: Int = SettingsRepository.DEFAULT_DWELL_MS
 
     // —— 播放（PRD §4.2；单 ExoPlayer 实例，onCleared 释放）——
     private val appContext = context.applicationContext
@@ -143,27 +127,34 @@ class VideoCardViewModel(
     /** 屏幕是否在前台（离屏不停播会白耗电；排序变化等离屏导航只装片不播）。 */
     private var visible = false
 
-    /** 会话撤回栈镜像（id 序）：置灰判据 + 撤回后拨回被撤项的下标。 */
-    private val markStack = ArrayDeque<MediaKey>()
-    private var dwellJob: Job? = null
+    /** 会话撤回栈已退役：撤回走 Snackbar（unmark 该 id）或「下滑回看 + 再左滑取消」。 */
     private var snackSeq = 0
 
     init {
         viewModelScope.launch {
             // 先取落盘配置再建会话（每轮数量 / 排序）。
-            // M11（拍板）：设置变更 = 下一轮生效——startNextRound 时重读对比，轮内不 rebuild、不清标记。
+            // 排序变更 = 下一轮生效（startNextRound 轮界重读对比，轮内不 rebuild、不清标记）。
             sort = settings.sortStrategy.first()
-            currentRoundSize = settings.perBoardRoundSize.first()[Board.VIDEO]
-                ?: SettingsRepository.defaultRoundSize(Board.VIDEO)
+            applyRoundSize(settings.perBoardRoundSize.first()[Board.VIDEO] ?: SettingsRepository.defaultRoundSize(Board.VIDEO))
             rebuild()
         }
+        // 每轮数量热生效（PRD §4.4）：live collect → 会话 roundSize 即时同步——当前轮立即按新值收尾
         viewModelScope.launch {
-            settings.videoDwellMs.collect { dwellMs = it }
+            settings.perBoardRoundSize.collect { map ->
+                applyRoundSize(map[Board.VIDEO] ?: SettingsRepository.defaultRoundSize(Board.VIDEO))
+            }
         }
         // 详情加载 + 装片播放：失效/坏文件/被外部删除 → 自动前进不崩溃
         viewModelScope.launch {
             snapshotFlow { currentId }.collect { id -> prepareCard(id) }
         }
+    }
+
+    /** 每轮数量唯一同步口：VM 快照与会话 roundSize 一起改（幂等；init 前 session 为 null 只改快照）。 */
+    private fun applyRoundSize(size: Int) {
+        currentRoundSize = size
+        session?.updateRoundSize(size)
+        sync()
     }
 
     // —— 播放（PRD §4.2：滑入自动播放、默认静音、点按暂停/继续；单 ExoPlayer）——
@@ -187,13 +178,7 @@ class VideoCardViewModel(
         player?.setVideoTextureView(view)
     }
 
-    /** 小喇叭：静音 ↔ 出声。 */
-    fun toggleMute() {
-        muted = !muted
-        player?.volume = if (muted) 0f else 1f
-    }
-
-    /** 播放区点按 = 暂停/继续（删除按钮等 overlay 消费自身点击，不会落到这里）。 */
+    /** 播放区点按 = 暂停/继续。 */
     fun togglePlayPause() {
         if (!visible || currentId == null) return
         val p = player ?: return
@@ -211,7 +196,7 @@ class VideoCardViewModel(
     private fun ensurePlayer(): ExoPlayer? {
         player?.let { return it }
         val p = ExoPlayer.Builder(appContext).build()
-        p.volume = if (muted) 0f else 1f
+        p.volume = 0f // 恒静音（PRD §4.2：无声开关，清理场景声音为干扰项）
         // PRD §4.2 口径：播完自动跳下一条（不循环）；回看走「下滑 = 上一个」。
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -284,19 +269,17 @@ class VideoCardViewModel(
 
     // —— 导航 ——
 
-    /** 上滑 = 下一个。 */
+    /** 上滑 / 右滑（保留）= 下一个。 */
     fun next() {
-        cancelDwell()
         nextStep()
     }
 
     /** 下滑 = 上一个（到头无效；回看不碰 session）。 */
     fun prev() {
-        cancelDwell()
         if (viewIndex > 0) viewIndex--
     }
 
-    /** 上滑主体（不含取消 dwell —— dwell 自动跳转复用）。 */
+    /** 前进主体（上滑 / 右滑 / 左滑标记共用）。 */
     private fun nextStep() {
         if (visitedIds.isNotEmpty() && viewIndex < visitedIds.lastIndex) {
             viewIndex++
@@ -320,69 +303,25 @@ class VideoCardViewModel(
         sync()
     }
 
-    // —— 删除按钮 toggle（任何可见卡，含回看）——
+    // —— 左滑标记（toggle + 随滑动前进）——
 
-    fun toggleMark() {
+    /** 左滑 = 标记删除并前进（与滑动位移一致）；已标记卡再左滑 = 取消标记（不发 Snackbar）。
+     *  可见卡必在已展示窗口内（fetchNext 时已消耗）→ session.mark 走回看分支：纯状态标记，指针/轮计数不动。 */
+    fun markCurrentAndAdvance() {
         val s = session ?: return
         if (!ready) return // 重建取数中：旧会话不可再动作
         val id = currentId ?: return
-        cancelDwell()
         if (id in s.markedIds) {
-            // 取消标记：立即生效、无停留
             s.unmark(id)
-            markStack.remove(id)
             sync()
-            return
+        } else {
+            s.mark(id)
+            if (id in s.markedIds) { // 会话拒绝（轮末等）→ 不前进之外无副作用
+                sync()
+                snack = SnackEvent(++snackSeq, markedCount, id)
+            }
         }
-        val consumeJump = s.current == id // mark 是否走「当前项被消耗」分支
-        s.mark(id)
-        if (id !in s.markedIds) {
-            // 会话按设计拒绝（轮末 / 非本窗口，BoardSession「轮末标记亦无操作」）→ 纯无操作
-            sync()
-            return
-        }
-        markStack.addLast(id)
-        sync()
-        scheduleDwell(id, consumeJump)
-    }
-
-    /** 标记停留：水印 + 计数，dwell 后按 mark 分支自动跳下一个，再发 Snackbar（≥1.5s）。 */
-    private fun scheduleDwell(id: MediaKey, consumeJump: Boolean) {
-        dwellJob?.cancel()
-        dwellActive = true
-        dwellId = id
-        dwellJob = viewModelScope.launch {
-            delay(dwellMs.toLong())
-            dwellActive = false
-            dwellId = null
-            if (consumeJump) fetchNext() else nextStep()
-            sync()
-            snack = SnackEvent(++snackSeq, markedCount, id)
-        }
-    }
-
-    /** 取消标记/切卡/离开共用：取消未完成的 dwell 计时。 */
-    fun cancelDwell() {
-        dwellJob?.cancel()
-        dwellJob = null
-        dwellActive = false
-        dwellId = null
-    }
-
-    // —— 撤回（右上角；栈式，false 置灰）——
-
-    fun undoMark() {
-        cancelDwell()
-        if (!ready) return
-        val s = session ?: return
-        val id = markStack.removeLastOrNull() ?: return
-        if (!s.undo()) { // 镜像兜底：会话栈空时恢复镜像，两栈保持一致
-            markStack.addLast(id)
-            return
-        }
-        // 与会话指针回拨对齐：展示拨回被撤项（指针不降不升语义见 BoardSession.undo）
-        val idx = visitedIds.indexOf(id)
-        if (idx >= 0) viewIndex = idx
+        nextStep()
         sync()
     }
 
@@ -390,35 +329,27 @@ class VideoCardViewModel(
         if (snack?.seq == seq) snack = null
     }
 
-    /** Snackbar「撤回」动作（PRD §4.2：撤回 = unmark 该 id，指针不动）。 */
+    /** Snackbar「撤回」动作（PRD §4.2：撤回 = unmark 该 id，停留当前卡）。 */
     fun undoSnack(id: MediaKey) {
         val s = session ?: return
-        if (s.unmark(id)) {
-            markStack.remove(id)
-            sync()
-        }
+        if (s.unmark(id)) sync()
     }
 
     // —— 轮次（PRD §4.4）——
 
     /** 轮末态「开始下一轮」：同会话 startNewRound（PRD §4.4 跳过项会话级出池、随机序不重洗，不重建
-     *  BoardSession）；设置变更在此轮界生效（每轮数量/排序 = 下一轮生效）。池尽未满轮 → 重扫池子开新轮。 */
+     *  BoardSession）；排序变更在此轮界生效（每轮数量已热生效，不参与重建判定）。池尽未满轮 → 重扫池子开新轮。 */
     fun startNextRound() {
         val s = session
         viewModelScope.launch {
-            // 设置热生效：轮界重读，变了才走重建口（init/设置变更/池尽三口之一）
+            // 设置热生效：轮界重读排序，变了才走重建口（init/设置变更/池尽三口之一）
             val newSort = settings.sortStrategy.first()
-            val newSize = settings.perBoardRoundSize.first()[Board.VIDEO]
-                ?: SettingsRepository.defaultRoundSize(Board.VIDEO)
-            if (s == null || newSort != sort || newSize != currentRoundSize || !s.roundEnded()) {
+            if (s == null || newSort != sort || !s.roundEnded()) {
                 sort = newSort
-                currentRoundSize = newSize
                 rebuild()
                 return@launch
             }
-            cancelDwell()
             s.startNewRound() // 指针不回拨：新轮消费下一段，旧轮项（含跳过）不重入
-            markStack.clear()
             visitedIds = emptyList()
             viewIndex = 0
             val first = s.current
@@ -437,16 +368,13 @@ class VideoCardViewModel(
      *  idOrder = source.ids(query) 排序序 + SortSpec.Random 时 fisherYates；visited/viewIndex/标记/镜像重置，
      *  并消费首条进入 visited（首屏即有卡；空池 → 空态）。 */
     private suspend fun rebuild() {
-        cancelDwell()
         ready = false
-        markStack.clear()
         visitedIds = emptyList()
         viewIndex = 0
         var order = source.ids(videoQuery())
         if (sort == SortSpec.Random) order = fisherYates(order, Random.Default)
         val s = BoardSession(order, currentRoundSize)
         session = s
-        markStack.clear() // 取数期间镜像不得残留（旧会话帧随会话一并作废）
         val first = s.current
         if (first != null) {
             s.advance()
@@ -499,6 +427,5 @@ class VideoCardViewModel(
         val s = session
         markedIds = s?.markedIds?.toSet() ?: emptySet()
         roundEnded = s?.roundEnded() ?: false
-        undoAvailable = markStack.isNotEmpty()
     }
 }

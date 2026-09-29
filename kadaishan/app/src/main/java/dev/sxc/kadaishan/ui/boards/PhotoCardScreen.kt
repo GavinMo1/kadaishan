@@ -8,7 +8,9 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,7 +18,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -25,12 +26,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -73,7 +72,7 @@ import dev.sxc.kadaishan.model.Gesture
 import dev.sxc.kadaishan.model.GestureMapping
 import dev.sxc.kadaishan.model.MediaItem
 import dev.sxc.kadaishan.ui.kit.Daylight
-import dev.sxc.kadaishan.ui.kit.GhostChip
+import dev.sxc.kadaishan.ui.kit.DragHintBadge
 import dev.sxc.kadaishan.ui.kit.InfoSheet
 import dev.sxc.kadaishan.ui.kit.PearlButton
 import dev.sxc.kadaishan.ui.kit.PillButton
@@ -92,8 +91,9 @@ import kotlin.math.abs
 
 // ═══ 图片板块（PRD §4.1 大图卡片流）═══
 // 一次一张全屏大图（AsyncImage，model = ImageRequest(item.uri)，parchment 占位 + 200ms crossfade），滑动即切换、无确认层；
-// 左/右/上滑全部经 settings.gestureMapping（图片板专属；默认 左=标记删除、右=跳过、上=信息卡、下=不绑定）；
-// 手势须从内侧起始区开始（禁边缘手势）；右上角 撤回（undo false 置灰）；顶层 inset 补偿由 MainActivity/AppRoot 统一做；
+// 左/右/上滑全部经 settings.gestureMapping（图片板专属；默认 左=标记删除、右=跳过、上=信息卡）；
+// 下滑固定 = 撤回（不进映射表；栈式可连撤至本轮开头，无可撤时轻拒绝触觉）；
+// 手势须从内侧起始区开始（禁边缘手势）；顶层 inset 补偿由 MainActivity/AppRoot 统一做；
 // 轮末（含 0 标记）自动弹结算（M4）；池尽 = 「池已尽 · 已看 N 项」+ 查看结算/开始下一轮双按钮（M2，禁死局）。
 
 /** 图片板块契约签名（宿主 MainActivity 按位置调用：board, source, settings, exifReader）。 */
@@ -150,6 +150,8 @@ fun PhotoCardScreen(
     )
     // 出场方向：最近一次触发换卡的手势主轴符号（左 = -1，右 = +1；上滑不换卡不参与）
     var exitDir by remember { mutableStateOf(1) }
+    // 换卡转场轴：false = 横向（左右滑正常前进）、true = 纵向（下拉撤回 → 被撤卡自底回入）
+    var swapVertical by remember { mutableStateOf(false) }
 
     // M4 轮末自动弹结算：消费满每轮数量即开面板，0 标记不拦截（空态由 S4 面板承接）。
     // roundEnded 翻 true 触发一次；用户关闭后不重复弹（key 未变 effect 不重跑），
@@ -198,7 +200,7 @@ fun PhotoCardScreen(
                     },
                     onDragEnd = {
                         if (valid && !vm.infoOpen) {
-                            // 主轴判定 → Gesture → 映射表取动作（DOWN 未绑定 → null → 无动作）
+                            // 主轴判定 → Gesture（DOWN 专属 = 撤回，不进映射表）
                             val gesture: Gesture? = if (abs(totalX) >= abs(totalY)) when {
                                 totalX <= -thresholdPx -> Gesture.LEFT
                                 totalX >= thresholdPx -> Gesture.RIGHT
@@ -208,18 +210,31 @@ fun PhotoCardScreen(
                                 totalY >= thresholdPx -> Gesture.DOWN
                                 else -> null
                             }
-                            val action = gesture?.let { mapping.map[it] }
-                            if (action != null) {
-                                when (action) {
-                                    BoardAction.MARK_DELETE -> haptics.confirm()
-                                    BoardAction.SKIP -> haptics.tick()
-                                    BoardAction.SHOW_INFO -> haptics.tap()
+                            if (gesture == Gesture.DOWN) {
+                                // 下拉撤回（栈式，可连撤至本轮开头）；无可撤 = 轻拒绝触觉
+                                if (vm.undoAvailable) {
+                                    haptics.tick()
+                                    swapVertical = true // 被撤卡自底回入
+                                    vm.undo()
+                                    onInteract()
+                                } else {
+                                    haptics.reject()
                                 }
-                                // 退场方向随手势：左滑退左、右滑退右（上滑开信息卡不换卡）
-                                if (gesture == Gesture.LEFT) exitDir = -1
-                                if (gesture == Gesture.RIGHT) exitDir = 1
-                                vm.onAction(action)
-                                onInteract()   // 干活自动收起顶栏（查看器式收纳）
+                            } else {
+                                val action = gesture?.let { mapping.map[it] }
+                                if (action != null) {
+                                    when (action) {
+                                        BoardAction.MARK_DELETE -> haptics.confirm()
+                                        BoardAction.SKIP -> haptics.tick()
+                                        BoardAction.SHOW_INFO -> haptics.tap()
+                                    }
+                                    // 退场方向随手势：左滑退左、右滑退右（上滑开信息卡不换卡）
+                                    if (gesture == Gesture.LEFT) exitDir = -1
+                                    if (gesture == Gesture.RIGHT) exitDir = 1
+                                    swapVertical = false
+                                    vm.onAction(action)
+                                    onInteract()   // 干活自动收起顶栏（查看器式收纳）
+                                }
                             }
                         }
                         valid = false
@@ -259,6 +274,12 @@ fun PhotoCardScreen(
                 transitionSpec = {
                     if (reducedMotion) {
                         fadeIn(snap()) togetherWith fadeOut(snap())
+                    } else if (swapVertical) {
+                        // 撤回：被撤卡自底回入、当前卡让位上移（下拉动作的镜像）
+                        (slideInVertically(Daylight.spatial()) { h -> h / 3 } + fadeIn(Daylight.settle()))
+                            .togetherWith(
+                                slideOutVertically(Daylight.spatial()) { h -> -h / 4 } + fadeOut(Daylight.settle()),
+                            )
                     } else {
                         // 授权动效（本 App 唯一作者化时刻）：旧卡沿手势方向退场、新卡对侧缓入
                         (slideInHorizontally(Daylight.spatial()) { w -> exitDir * -w / 4 } + fadeIn(Daylight.settle()))
@@ -285,14 +306,22 @@ fun PhotoCardScreen(
                     // 方向语义浮标：拖动越接近判定阈值，卡侧渐显当前映射的动作（左/右各自取色）
                     dragBadge(mapping.map[Gesture.LEFT])?.let { (label, bg, fg) ->
                         DragHintBadge(
-                            text = label, bg = bg, fg = fg, side = -1, followX = { followX },
+                            text = label, bg = bg, fg = fg, side = -1, follow = { followX },
                             modifier = Modifier.align(Alignment.CenterStart).padding(start = 20.dp),
                         )
                     }
                     dragBadge(mapping.map[Gesture.RIGHT])?.let { (label, bg, fg) ->
                         DragHintBadge(
-                            text = label, bg = bg, fg = fg, side = 1, followX = { followX },
+                            text = label, bg = bg, fg = fg, side = 1, follow = { followX },
                             modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp),
+                        )
+                    }
+                    // 下拉撤回浮标（仅撤回栈非空时出现；无可撤不教这个动作）
+                    if (vm.undoAvailable) {
+                        DragHintBadge(
+                            text = "撤回", bg = Daylight.canvas, fg = Daylight.inkStrong,
+                            side = 1, follow = { followY }, vertical = true,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp),
                         )
                     }
                 }
@@ -350,17 +379,23 @@ fun PhotoCardScreen(
             }
         }
 
-        // ② 右上角动作圆片（信息 / 撤回；撤回 false 置灰）——悬浮 chrome 之下、卡内右上
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(top = 68.dp, end = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            GhostChip(text = "信息", onClick = { vm.infoOpen = true })
-            Spacer(modifier = Modifier.width(8.dp))
-            GhostChip(text = "撤回", onClick = vm::undo, enabled = vm.undoAvailable)
+        // ② 首轮首卡一次性手势提示（文案随映射动态生成；首次滑动后自然消失）——卡面无角标按钮
+        if (vm.ready && vm.currentId != null && vm.seenCount == 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 44.dp)
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
+                    .background(Daylight.chipTranslucent)
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+            ) {
+                Text(
+                    text = hintText(mapping),
+                    color = Daylight.ink,
+                    fontSize = 13.sp,
+                )
+            }
         }
 
         // ③ 信息抽屉（kit 共享件）：当前媒体头图 + 分组行；下滑/点遮罩/系统返回关闭
@@ -400,41 +435,11 @@ fun PhotoCardScreen(
     }
 }
 
-/**
- * 拖动方向浮标：随跟手进度渐显（alpha/缩放在 graphicsLayer 惰性读 followX，逐帧不重组），
- * 倾斜角与卡片同步。side = -1 左缘（响应左拖）、+1 右缘（响应右拖）。
- */
-@Composable
-private fun DragHintBadge(
-    text: String,
-    bg: Color,
-    fg: Color,
-    side: Int,
-    followX: () -> Float,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .graphicsLayer {
-                val x = followX()
-                val progress = ((side * x - 14f) / 26f).coerceIn(0f, 1f)
-                alpha = progress
-                val s = 0.9f + 0.1f * progress
-                scaleX = s
-                scaleY = s
-                rotationZ = x * 0.12f
-            }
-            .clip(RoundedCornerShape(Daylight.pillRadius))
-            .background(bg)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = text,
-            color = fg,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
+/** 首卡提示文案（随手势映射动态生成，不写死默认序）。 */
+private fun hintText(mapping: GestureMapping): String {
+    val left = dragBadge(mapping.map[Gesture.LEFT])?.first ?: "标记删除"
+    val right = dragBadge(mapping.map[Gesture.RIGHT])?.first ?: "跳过"
+    return "左滑$left · 右滑$right · 下拉撤回"
 }
 
 /** 浮标样式按动作语义取色：删除 = 危险红；跳过 = 白底墨字（次级）；信息 = Action Blue。 */
