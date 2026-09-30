@@ -132,7 +132,7 @@ components:
 - Action Blue #0066CC 是唯一"可点"信号色；danger 红只承担破坏性/错误语义
 - 圆角四档制 5/8/11/18dp + pill，无中间档
 - 阴影只给影像（productShadow 一款），控件与卡片零投影零 tonal elevation
-- iOS 弹簧动效两根曲线（spatial / settle）+ 触觉回执四类（tick / confirm / reject / tap）；系统关动效时降级直切
+- iOS 弹簧词汇表六根（spatial / settle / tap / fling / drawer / pop，按交互原型分级）+ 触觉回执四类（tick / confirm / reject / tap）；换卡退场带松手速度接续（甩得越快飞得越远）；系统关动效时降级直切
 - 内容全幅、chrome 悬浮半透覆盖，显隐不引起内容重排
 
 ## Colors
@@ -217,6 +217,21 @@ components:
 
 **The Zero-Height Rule.** 卡片一律 hairlineBorder（1px hairline）或米白分层，不用阴影；ModalBottomSheet tonalElevation = 0。若一个表面看起来"浮起来了"，先检查它是不是影像——不是就去掉阴影。
 
+## Motion（弹簧词汇表）
+
+全部动效 = `Daylight` 六根弹簧，按交互原型取用，禁止发明第七根：
+
+| 弹簧 | 原型（物理锚） | 参数 | 用途 |
+| --- | --- | --- | --- |
+| `spatial()` | 位移进场 | 0.9 / 400 | 新卡缓入、选中片滑动 |
+| `settle()` | 状态过渡 | 1.0 / 1500 | chrome 显隐、跟手回弹 |
+| `tap()` | 卡扣 · 磁铁吸合 | 0.62 / 2600 | 按钮按压缩放（50–100ms 手感） |
+| `fling()` | 甩出 · 急促带活性 | 0.86 / 750 | 换卡退场（行程 × 松手速度系数 1.0~1.8 = 速度接续） |
+| `drawer()` | 气压关门器 | 1.0 / 550 | 抽屉入场/回弹（SpringSheet） |
+| `pop()` | 落定 · 轻过冲 | 0.62 / 700 | 勾选落定等达成动作 |
+
+配套规则：手势松手速度经 `VelocityTracker` 进入退场行程（甩得越快飞得越远，双板同手感）；`SpringSheet`（自绘抽屉物理层）承接 InfoSheet 类浮层——入场 drawer 到顶、把手拖拽跟手、≥140dp 判 dismiss、遮罩/返回先退场再移除；结算面板暂用 M3 sheet 待迁移。
+
 ## Shapes
 
 圆角四档制 + pill，无中间档：5（xs：最小内嵌件）/ 8（sm：圆片、缩略图、分段页签）/ 11（md：次级键）/ 18（lg：影像大卡、分组容器、悬浮 chrome）+ 50（pill：主键、计数圆牌、把手）。形态语汇：药丸（主键）、圆片（媒体面上动作）、圆环（勾选）、圆角矩形（容器）。AppTheme 的 M3 Shapes 已按此归位（medium 及以上全部 18）。
@@ -281,7 +296,7 @@ M3 ModalBottomSheet 显式收编：canvas 底、hairline 把手、tonalElevation
 ### Do:
 
 - **Do** 全部色值/圆角/弹簧引用 `Daylight` 单一来源；AppTheme 与新界面只引用，不写裸 hex。
-- **Do** 给每个状态改变的操作配触觉回执与弹簧动效（spatial 位移 / settle 状态过渡）；尊重系统"移除动画"开关降级直切。
+- **Do** 给每个状态改变的操作配触觉回执与弹簧动效（按词汇表取原型：位移 spatial / 状态 settle / 按压 tap / 甩出 fling / 抽屉 drawer / 落定 pop）；尊重系统"移除动画"开关降级直切。
 - **Do** chrome 悬浮于内容之上（半透白 @80% + hairline），让内容保持全幅；显隐用 slide+fade，不重排布局。
 - **Do** 危险动作用红色药丸 + 系统二次确认，结果一律三态可追（已执行/未执行/结果未知）。
 - **Do** 保证每个终态有出口（"查看结算 / 开始下一轮"双按钮），不留零按钮死局。

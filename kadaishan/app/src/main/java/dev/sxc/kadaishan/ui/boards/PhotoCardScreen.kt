@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -152,6 +153,8 @@ fun PhotoCardScreen(
     var exitDir by remember { mutableStateOf(1) }
     // 换卡转场轴：false = 横向（左右滑正常前进）、true = 纵向（下拉撤回 → 被撤卡自底回入）
     var swapVertical by remember { mutableStateOf(false) }
+    // 甩出速度接续：松手速度越快退场飞得越远（行程系数 1.0~1.8，转场 lambda 内读）
+    var exitBoost by remember { mutableStateOf(1f) }
 
     // M4 轮末自动弹结算：消费满每轮数量即开面板，0 标记不拦截（空态由 S4 面板承接）。
     // roundEnded 翻 true 触发一次；用户关闭后不重复弹（key 未变 effect 不重跑），
@@ -175,7 +178,9 @@ fun PhotoCardScreen(
             .fillMaxSize()
             .daylightBackground()
             .pointerInput(mapping, vm) {
-                // 手势热路径零分配：阈值/边界仅在进入时算一次，拖动只累加标量
+                // 手势热路径零分配：阈值/边界仅在进入时算一次，拖动只累加标量；
+                // VelocityTracker 单实例随 pointerInput 生命周期创建——松手取甩出速度做退场接续
+                val tracker = VelocityTracker()
                 val edgePx = 24.dp.toPx()
                 val thresholdPx = 56.dp.toPx()
                 var totalX = 0f
@@ -185,20 +190,24 @@ fun PhotoCardScreen(
                     onDragStart = { offset ->
                         totalX = 0f
                         totalY = 0f
+                        tracker.resetTracking()
                         // 起点必须在内侧起始区（四边各留 24dp，禁边缘手势）
                         valid = offset.x >= edgePx && offset.x <= size.width - edgePx &&
                             offset.y >= edgePx && offset.y <= size.height - edgePx
                     },
-                    onDrag = { _, dragAmount ->
+                    onDrag = { change, dragAmount ->
                         if (valid) {
                             totalX += dragAmount.x
                             totalY += dragAmount.y
+                            tracker.addPosition(change.uptimeMillis, change.position)
                             // 跟手：位移 16% + 轻微倾斜（弹簧追踪，直写目标无分配）
                             followXTarget = (totalX * 0.16f).coerceIn(-72f, 72f)
                             followYTarget = (totalY * 0.16f).coerceIn(-72f, 72f)
                         }
                     },
                     onDragEnd = {
+                        val flickX = tracker.calculateVelocity().x
+                        tracker.resetTracking()
                         if (valid && !vm.infoOpen) {
                             // 主轴判定 → Gesture（DOWN 专属 = 撤回，不进映射表）
                             val gesture: Gesture? = if (abs(totalX) >= abs(totalY)) when {
@@ -228,9 +237,13 @@ fun PhotoCardScreen(
                                         BoardAction.SKIP -> haptics.tick()
                                         BoardAction.SHOW_INFO -> haptics.tap()
                                     }
-                                    // 退场方向随手势：左滑退左、右滑退右（上滑开信息卡不换卡）
+                                    // 退场方向随手势：左滑退左、右滑退右（上滑开信息卡不换卡）；
+                                    // 速度接续：甩得越快退场行程越长（fling 弹簧）
                                     if (gesture == Gesture.LEFT) exitDir = -1
                                     if (gesture == Gesture.RIGHT) exitDir = 1
+                                    if (gesture == Gesture.LEFT || gesture == Gesture.RIGHT) {
+                                        exitBoost = 1f + (abs(flickX) / 12000f).coerceIn(0f, 0.8f)
+                                    }
                                     swapVertical = false
                                     vm.onAction(action)
                                     onInteract()   // 干活自动收起顶栏（查看器式收纳）
@@ -281,10 +294,11 @@ fun PhotoCardScreen(
                                 slideOutVertically(Daylight.spatial()) { h -> -h / 4 } + fadeOut(Daylight.settle()),
                             )
                     } else {
-                        // 授权动效（本 App 唯一作者化时刻）：旧卡沿手势方向退场、新卡对侧缓入
+                        // 授权动效（本 App 唯一作者化时刻）：旧卡沿手势方向退场（fling 弹簧 +
+                        // 松手速度接续的行程系数）、新卡对侧缓入
                         (slideInHorizontally(Daylight.spatial()) { w -> exitDir * -w / 4 } + fadeIn(Daylight.settle()))
                             .togetherWith(
-                                slideOutHorizontally(Daylight.spatial()) { w -> exitDir * w / 3 } + fadeOut(Daylight.settle()),
+                                slideOutHorizontally(Daylight.fling()) { w -> (exitDir * w / 3f * exitBoost).toInt() } + fadeOut(Daylight.settle()),
                             )
                     }
                 },

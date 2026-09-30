@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -132,6 +133,8 @@ fun VideoCardScreen(
     var navDir by remember { mutableStateOf(1) }
     // 换卡轴：true = 横向（左删/右留，与图片板同语汇），false = 纵向（翻页导航）
     var navAxis by remember { mutableStateOf(false) }
+    // 甩出速度接续：横向退场行程系数（1.0~1.8，转场 lambda 内读）
+    var exitBoost by remember { mutableStateOf(1f) }
     val reducedMotion = rememberReducedMotion()
     // 横向拖动浮标跟手（画面本体不位移：播放中平移画面观感撕裂，浮标渐显已足够反馈）
     var followXTarget by remember { mutableStateOf(0f) }
@@ -183,7 +186,9 @@ fun VideoCardScreen(
             .fillMaxSize()
             .background(Daylight.surfaceBlack)
             .pointerInput(vm) {
-                // 手势热路径零分配：阈值/边界仅在进入时算一次，拖动只累加标量
+                // 手势热路径零分配：阈值/边界仅在进入时算一次，拖动只累加标量；
+                // VelocityTracker 单实例随 pointerInput 生命周期创建——松手取甩出速度做退场接续
+                val tracker = VelocityTracker()
                 val edgePx = 24.dp.toPx()
                 val thresholdPx = 56.dp.toPx()
                 var totalX = 0f
@@ -193,25 +198,37 @@ fun VideoCardScreen(
                     onDragStart = { offset ->
                         totalX = 0f
                         totalY = 0f
+                        tracker.resetTracking()
                         // 起点必须在内侧起始区（四边各留 24dp，禁边缘手势）
                         valid = offset.x >= edgePx && offset.x <= size.width - edgePx &&
                             offset.y >= edgePx && offset.y <= size.height - edgePx
                     },
-                    onDrag = { _, dragAmount ->
+                    onDrag = { change, dragAmount ->
                         if (valid) {
                             totalX += dragAmount.x
                             totalY += dragAmount.y
+                            tracker.addPosition(change.uptimeMillis, change.position)
                             // 浮标跟手（16% 截幅）；进度条带内横向拖动被子层 seek 消费 → 本层手势自动取消，不误标
                             followXTarget = (totalX * 0.16f).coerceIn(-72f, 72f)
                         }
                     },
                     onDragEnd = {
+                        val flickX = tracker.calculateVelocity().x
+                        tracker.resetTracking()
                         if (valid && !vm.infoOpen) {
                             if (abs(totalX) >= abs(totalY)) {
-                                // 横向 = 标记语汇（与图片板一致：左删右留）
+                                // 横向 = 标记语汇（与图片板一致：左删右留）；速度接续进退场行程
                                 when {
-                                    totalX <= -thresholdPx -> { navAxis = true; navDir = -1; haptics.confirm(); vm.markCurrentAndAdvance(); onInteract() }
-                                    totalX >= thresholdPx -> { navAxis = true; navDir = 1; haptics.tick(); vm.next(); onInteract() }
+                                    totalX <= -thresholdPx -> {
+                                        navAxis = true; navDir = -1
+                                        exitBoost = 1f + (abs(flickX) / 12000f).coerceIn(0f, 0.8f)
+                                        haptics.confirm(); vm.markCurrentAndAdvance(); onInteract()
+                                    }
+                                    totalX >= thresholdPx -> {
+                                        navAxis = true; navDir = 1
+                                        exitBoost = 1f + (abs(flickX) / 12000f).coerceIn(0f, 0.8f)
+                                        haptics.tick(); vm.next(); onInteract()
+                                    }
                                 }
                             } else {
                                 // 纵向 = 翻页导航（抖音式）
@@ -242,9 +259,10 @@ fun VideoCardScreen(
                 if (reducedMotion) {
                     fadeIn(snap()) togetherWith fadeOut(snap())
                 } else if (navAxis) {
+                    // 横向退场 = fling 弹簧 + 松手速度接续的行程系数（与图片板同手感）
                     (slideInHorizontally(Daylight.spatial()) { w -> navDir * -w / 4 } + fadeIn(Daylight.settle()))
                         .togetherWith(
-                            slideOutHorizontally(Daylight.spatial()) { w -> navDir * w / 3 } + fadeOut(Daylight.settle()),
+                            slideOutHorizontally(Daylight.fling()) { w -> (navDir * w / 3f * exitBoost).toInt() } + fadeOut(Daylight.settle()),
                         )
                 } else {
                     (slideInVertically(Daylight.spatial()) { h -> navDir * h / 3 } + fadeIn(Daylight.settle()))
