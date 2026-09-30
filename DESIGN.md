@@ -230,7 +230,7 @@ components:
 | `drawer()` | 气压关门器 | 1.0 / 550 | 抽屉入场/回弹（SpringSheet） |
 | `pop()` | 落定 · 轻过冲 | 0.62 / 700 | 勾选落定等达成动作 |
 
-配套规则：手势松手速度经 `VelocityTracker` 进入退场行程（甩得越快飞得越远，双板同手感）；`SpringSheet`（自绘抽屉物理层）承接 InfoSheet 类浮层——入场 drawer 到顶、把手拖拽跟手、≥140dp 判 dismiss、遮罩/返回先退场再移除；结算面板暂用 M3 sheet 待迁移。
+配套规则：手势松手速度经 `VelocityTracker` 进入退场行程（甩得越快飞得越远，双板同手感）；`SpringSheet`（自绘抽屉物理层）承接全部抽屉浮层（InfoSheet / 结算面板）——入场 drawer 到顶、把手拖拽跟手、≥140dp 判 dismiss、遮罩/返回先退场再移除；结算面板 CONFIRMING/VERIFYING 相位经 `closable=false` 锁关闭（把手可拉但回弹，遮罩/返回无效）。峰值时刻：结果页「已释放」数值滚动落定（settle 0→1）。
 
 ## Shapes
 

@@ -6,6 +6,7 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,14 +28,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,7 +72,9 @@ import dev.sxc.kadaishan.ui.kit.Daylight
 import dev.sxc.kadaishan.ui.kit.PearlButton
 import dev.sxc.kadaishan.ui.kit.PillButton
 import dev.sxc.kadaishan.ui.kit.Spinner
+import dev.sxc.kadaishan.ui.kit.SpringSheet
 import dev.sxc.kadaishan.ui.kit.minTouch
+import dev.sxc.kadaishan.ui.kit.rememberReducedMotion
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -98,7 +98,6 @@ private enum class SystemOperation { DELETE, RESTORE }
  *   缺省时回退现有语义——「继续下一轮」走 [onNextRound]、「返回」走 [onDismiss]。
  */
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
 fun SettlementPanel(
     markedIds: List<Long>,
     totalInRound: Int,
@@ -113,7 +112,6 @@ fun SettlementPanel(
     permanentAllowed: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // 面板批次态走 rememberSaveable：旋转/重建不丢相位与批进度、不重复发批；
     // enum 一律以 name 字符串入库（沿用 MainActivity 的 Bundle 可存性口径）。
     // outgoing 刻意用 remember 不落盘：重建后不重新 launch，系统弹窗结果由 ResultRegistry 补送。
@@ -254,13 +252,10 @@ fun SettlementPanel(
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = {
-            if (stage != PanelStage.CONFIRMING && stage != PanelStage.VERIFYING) onDismiss()
-        },
-        sheetState = sheetState,
-        containerColor = Daylight.canvas,
-        tonalElevation = 0.dp,
+    // 弹簧抽屉物理层（Slide 原型）：CONFIRMING/VERIFYING 相位锁关闭（把手可拉回弹、遮罩/返回无效）
+    SpringSheet(
+        onDismiss = onDismiss,
+        closable = stage != PanelStage.CONFIRMING && stage != PanelStage.VERIFYING,
     ) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
             when (stage) {
@@ -568,7 +563,7 @@ fun SettlementPanel(
     )
     Spacer(Modifier.height(8.dp))
     if (mode == DeleteMode.PERMANENT && deleted > 0) {
-        Text("已释放 ${formatSize(deletedResults.sumOf { it.item.sizeBytes })}", color = Daylight.inkSub, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        CountUpBytes(bytes = deletedResults.sumOf { it.item.sizeBytes })
     }
     if (trashed > 0) {
         val latestExpires = trashedResults.mapNotNull { it.dateExpiresSec }.maxOrNull()
@@ -654,6 +649,27 @@ private val LongSetSaver: Saver<Set<Long>, String> = Saver(
         else raw.split(",").mapTo(LinkedHashSet<Long>()) { it.toLong() }
     },
 )
+
+/** 峰值时刻：释放空间数值滚动落定（settle 弹簧 0→1；reducedMotion 直达终值）。 */
+@Composable
+private fun CountUpBytes(bytes: Long) {
+    val reduced = rememberReducedMotion()
+    val progress = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(bytes) {
+        if (!reduced && bytes > 0) {
+            progress.snapTo(0f)
+            progress.animateTo(1f, Daylight.settle())
+        } else {
+            progress.snapTo(1f)
+        }
+    }
+    Text(
+        "已释放 ${formatSize((bytes * progress.value).toLong())}",
+        color = Daylight.inkSub,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
 private fun statusLabel(status: SettlementItemStatus): String = when (status) {
     SettlementItemStatus.TRASHED -> "已入回收站"

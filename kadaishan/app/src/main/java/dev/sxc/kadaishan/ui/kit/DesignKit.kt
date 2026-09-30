@@ -555,14 +555,16 @@ fun Spinner(modifier: Modifier = Modifier, size: Dp = 20.dp) {
 
 /**
  * 弹簧抽屉（Slide 原型 · 气压关门器）：抽屉类浮层的物理层——
- * 入场 = drawer() 自底到顶 + 遮罩渐显；把手垂直拖拽跟手（位移 ≥140dp 或下甩速度双判
- * dismiss，否则 drawer() 回弹）；点遮罩 / 系统返回 = 先退场动画再移除组合。
- * 自绘替代 M3 ModalBottomSheet（平台曲线与本体系不合；结算面板暂仍用 M3，待迁移）。
+ * 入场 = drawer() 自底到顶 + 遮罩渐显；把手垂直拖拽跟手（位移 ≥140dp 判 dismiss，否则 drawer() 回弹）；
+ * 点遮罩 / 系统返回 = 先退场动画再移除组合。自绘替代 M3 ModalBottomSheet（平台曲线与本体系不合）。
+ * closable = false 时拒绝关闭（结算面板 CONFIRMING/VERIFYING 相位守卫）：把手可拉但回弹、
+ * 遮罩/返回无效——锁的是关闭，不锁反馈。
  */
 @Composable
 fun SpringSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    closable: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val reduced = rememberReducedMotion()
@@ -579,7 +581,7 @@ fun SpringSheet(
     var sheetHeightPx by remember { mutableStateOf(1f) }
 
     fun dismissAnimated() {
-        if (closing) return
+        if (closing || !closable) return
         closing = true
         scope.launch {
             fraction.animateTo(0f, if (reduced) snap() else Daylight.drawer())
@@ -636,9 +638,7 @@ fun SpringSheet(
                                     if (!closing) dragTarget = (dragTarget + amount).coerceAtLeast(0f)
                                 },
                                 onDragEnd = {
-                                    if (!closing) {
-                                        if (dragTarget >= dismissPx) dismissAnimated() else dragTarget = 0f
-                                    }
+                                    if (!closing && dragTarget >= dismissPx && closable) dismissAnimated() else dragTarget = 0f
                                 },
                                 onDragCancel = { if (!closing) dragTarget = 0f },
                             )
