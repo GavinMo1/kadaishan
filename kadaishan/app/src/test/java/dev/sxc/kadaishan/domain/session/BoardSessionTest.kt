@@ -164,6 +164,25 @@ class BoardSessionTest {
     }
 
     @Test
+    fun `updateRoundSize 缩到严格低于已消耗值：本轮立即结束（== 语义的回归护栏）`() {
+        // 回归场景：每轮 20 滑了 15 张，设置页把滑条拖到 10 —— consumed(15) 恒不等于 10，
+        // == 语义下本轮永不结束（结算不再触发）；>= 语义下立即轮末。
+        val s = BoardSession(ids(9), 5)
+        s.advance()
+        s.advance()
+        s.advance() // 已消耗 3
+
+        s.updateRoundSize(2) // 缩到严格低于已消耗值
+        assertTrue(s.roundEnded())
+        assertNull(s.current) // 轮末不泄漏下一条
+        assertEquals(3, s.consumed) // 不回拨、不超额重置
+
+        s.updateRoundSize(6) // 轮末再放大：本轮复活（consumed < 新值）
+        assertFalse(s.roundEnded())
+        assertEquals(4L, s.current!!)
+    }
+
+    @Test
     fun `startNewRound 沿用热调后的 roundSize 且标记撤回栈保留到收尾`() {
         val s = BoardSession(ids(6), 5)
         s.mark(1L)

@@ -3,6 +3,7 @@ package dev.sxc.kadaishan.ui.boards
 import android.graphics.drawable.ColorDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
@@ -14,6 +15,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -32,6 +38,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,20 +49,25 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -84,6 +99,7 @@ import dev.sxc.kadaishan.ui.kit.productShadow
 import dev.sxc.kadaishan.ui.kit.rememberHaptics
 import dev.sxc.kadaishan.ui.kit.rememberReducedMotion
 import dev.sxc.kadaishan.ui.settle.SettlementPanel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -95,7 +111,7 @@ import kotlin.math.abs
 // 左/右/上滑全部经 settings.gestureMapping（图片板专属；默认 左=标记删除、右=跳过、上=信息卡）；
 // 下滑固定 = 撤回（不进映射表；栈式可连撤至本轮开头，无可撤时轻拒绝触觉）；
 // 手势须从内侧起始区开始（禁边缘手势）；顶层 inset 补偿由 MainActivity/AppRoot 统一做；
-// 轮末（含 0 标记）自动弹结算（M4）；池尽 = 「池已尽 · 已看 N 项」+ 查看结算/开始下一轮双按钮（M2，禁死局）。
+// 有标记的轮末/池尽进入复核；无标记自动继续，池尽停在完成空态。
 
 /** 图片板块契约签名（宿主 MainActivity 按位置调用：board, source, settings, exifReader）。 */
 @Composable
@@ -106,6 +122,8 @@ fun PhotoCardScreen(
     exifReader: ExifReader,
     deleter: MediaDeleter,
     pendingSettlement: PendingSettlementRepository,
+    history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
 ) {
@@ -114,7 +132,7 @@ fun PhotoCardScreen(
     val vm: PhotoCardViewModel = viewModel(
         key = "photo-card:${board.name}",
         factory = viewModelFactory {
-            initializer { PhotoCardViewModel(board, source, settings) }
+            initializer { PhotoCardViewModel(board, source, settings, history) }
         },
     )
 
@@ -124,14 +142,25 @@ fun PhotoCardScreen(
     val permanentAllowed by settings.permanentDeleteUnlocked.collectAsState(initial = true)
     val context = LocalContext.current
     // 切图零闪烁：解码预热——未来 5 项预解码进 Coil 内存缓存（命中内存缓存即时渲染、crossfade 跳过）
+    // key 含 items.size：预取入缓存（size 变化）时重跑一次，补上当前卡切入时尚未加载完成的未来项
     val imageLoader = remember(context) { ImageLoader.Builder(context).build() }
-    LaunchedEffect(vm.currentId, vm.items) {
+    LaunchedEffect(vm.currentId, vm.items.size) {
         vm.upcomingUris(5).forEach { uri ->
             imageLoader.enqueue(ImageRequest.Builder(context).data(uri).build())
         }
     }
     // M1：saveable —— 旋转/配置重建不丢面板状态（VM 存活，标记仍在会话里）
     var settlementOpen by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm.actionError) {
+        vm.actionError?.let { message ->
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(message, duration = SnackbarDuration.Short)
+            if (vm.actionError == message) vm.dismissActionError()
+        }
+    }
+
+    val screenScope = rememberCoroutineScope()
 
     // —— iOS 质感行为层 ——
     val haptics = rememberHaptics()
@@ -155,12 +184,16 @@ fun PhotoCardScreen(
     var swapVertical by remember { mutableStateOf(false) }
     // 甩出速度接续：松手速度越快退场飞得越远（行程系数 1.0~1.8，转场 lambda 内读）
     var exitBoost by remember { mutableStateOf(1f) }
+    // 照片缩放态：>1x 时屏蔽滑卡/撤回/信息手势（平移优先，iOS 照片口径）；换卡复位
+    var zoomed by remember { mutableStateOf(false) }
+    LaunchedEffect(vm.currentId) { zoomed = false }
 
-    // M4 轮末自动弹结算：消费满每轮数量即开面板，0 标记不拦截（空态由 S4 面板承接）。
-    // roundEnded 翻 true 触发一次；用户关闭后不重复弹（key 未变 effect 不重跑），
-    // 轮末过渡屏的「查看结算」作重入口；开新轮 roundEnded 归 false，下轮结束再次触发。
-    LaunchedEffect(vm.roundEnded) {
-        if (vm.roundEnded) settlementOpen = true
+    // 零删除轮不中断浏览；依赖 ready 防止重建过程被误判为池尽。
+    LaunchedEffect(vm.ready, vm.roundEnded, vm.currentId) {
+        if (vm.ready && vm.currentId == null) {
+            if (vm.markedCount > 0) settlementOpen = true
+            else if (vm.roundEnded) vm.startNextRound()
+        }
     }
 
     BackHandler(enabled = vm.infoOpen) { vm.infoOpen = false }
@@ -191,8 +224,9 @@ fun PhotoCardScreen(
                         totalX = 0f
                         totalY = 0f
                         tracker.resetTracking()
-                        // 起点必须在内侧起始区（四边各留 24dp，禁边缘手势）
-                        valid = offset.x >= edgePx && offset.x <= size.width - edgePx &&
+                        // 起点必须在内侧起始区（四边各留 24dp，禁边缘手势）；照片放大时让位平移
+                        valid = !zoomed &&
+                            offset.x >= edgePx && offset.x <= size.width - edgePx &&
                             offset.y >= edgePx && offset.y <= size.height - edgePx
                     },
                     onDrag = { change, dragAmount ->
@@ -271,12 +305,19 @@ fun PhotoCardScreen(
     ) {
         // ① 大图 / 终态
         when {
-            !vm.ready -> Text(
-                text = "加载中…",
+            // 加载语汇统一：Spinner + 弱化文案（与视频板 / 结算面板 LoadingContent 同构；瞬态缺行只显 Spinner）
+            !vm.ready -> Column(
                 modifier = Modifier.align(Alignment.Center),
-                color = Daylight.inkStrong,
-                style = MaterialTheme.typography.bodyLarge,
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spinner()
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "加载中…",
+                    color = Daylight.inkSub,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
 
             vm.currentId != null && item == null -> Spinner(
                 modifier = Modifier.align(Alignment.Center),
@@ -310,6 +351,7 @@ fun PhotoCardScreen(
                         imageLoader = imageLoader,
                         seenCount = vm.seenCount,
                         totalInRound = vm.currentRoundSize,
+                        onZoomChange = { zoomed = it },
                         // 跟手变换：graphicsLayer 惰性读取动画状态，逐帧不重组
                         modifier = Modifier.graphicsLayer {
                             translationX = followX
@@ -335,13 +377,13 @@ fun PhotoCardScreen(
                         DragHintBadge(
                             text = "撤回", bg = Daylight.canvas, fg = Daylight.inkStrong,
                             side = 1, follow = { followY }, vertical = true,
-                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp),
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
                         )
                     }
                 }
             }
 
-            // 轮末纯过渡（M4）：正常流由上面的 LaunchedEffect 自动弹结算（含 0 标记），
+            // 有标记轮末的兜底过渡页：正常流程由 LaunchedEffect 自动打开复核，
             // 此屏只在用户主动关闭面板后兜底作重入口，不再停等点「查看结算」
             vm.roundEnded -> Column(
                 modifier = Modifier.align(Alignment.Center),
@@ -350,7 +392,7 @@ fun PhotoCardScreen(
                 Text(
                     text = "本轮已处理 ${vm.currentRoundSize} 项",
                     color = Daylight.ink,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -376,19 +418,22 @@ fun PhotoCardScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "池已尽 · 已看 ${vm.seenCount} 项",
+                    text = "暂时没有待整理的照片",
                     color = Daylight.ink,
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 )
                 Spacer(modifier = Modifier.height(28.dp))
-                PillButton(
-                    text = "查看结算",
+                if (vm.markedCount > 0) PillButton(
+                    text = "查看待删除项",
                     onClick = { settlementOpen = true },
+                ) else PillButton(
+                    text = "检查新照片",
+                    onClick = { vm.startNextRound() },
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 PearlButton(
-                    text = "开始下一轮",
-                    onClick = { vm.startNextRound() },
+                    text = "重新整理已保留项目",
+                    onClick = { vm.reviewKeptAgain() },
                 )
             }
         }
@@ -399,10 +444,10 @@ fun PhotoCardScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 44.dp)
+                    .padding(bottom = 48.dp)
                     .clip(RoundedCornerShape(Daylight.pillRadius))
                     .background(Daylight.chipTranslucent)
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
             ) {
                 Text(
                     text = hintText(mapping),
@@ -424,22 +469,39 @@ fun PhotoCardScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        SnackbarHost(snackbar, Modifier.navigationBarsPadding().padding(bottom = 88.dp))
+    }
+
     // 终态才渲染（轮末会话必 currentId=null；池尽同）：既对齐面板语义，
     // 也防 saveable 残留 true 在进程重建后盖住新一轮卡片（重建期 ready=false 同样拦下）
     if (settlementOpen && vm.ready && vm.currentId == null) {
         SettlementPanel(
             markedIds = vm.markedSnapshot(),
-            totalInRound = vm.currentRoundSize,
+            totalInRound = vm.seenCount,
             source = source,
             deleter = deleter,
             pendingStore = pendingSettlement,
+            onKeep = { history.setKept(it, true) },
+            onCompleted = { message, canRestore ->
+                settlementOpen = false
+                vm.startNextRound()
+                screenScope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    if (snackbar.showSnackbar(
+                            message = message,
+                            actionLabel = if (canRestore) "找回" else null,
+                            duration = SnackbarDuration.Short,
+                            withDismissAction = true,
+                        ) == SnackbarResult.ActionPerformed) onOpenTrash()
+                }
+            },
             onNextRound = {
                 settlementOpen = false
                 vm.startNextRound()
             },
             onDismiss = { settlementOpen = false },
-            // M5：结果页「返回」「继续下一轮」共用——清标记进新轮（与 Video 侧一致）；
-            // 划走/返回键（onDismissRequest→onDismiss）仍回轮末过渡屏，留「查看结算」重入口
+            // 异常结果页统一出口；复核阶段取消仍由 onDismiss 回到轮末。
             onExitRound = {
                 settlementOpen = false
                 vm.startNextRound()
@@ -468,6 +530,10 @@ private fun dragBadge(action: BoardAction?): Triple<String, Color, Color>? = whe
  * 大图卡：全幅留白（顶 = 状态栏 + 悬浮 chrome 高度，底 = 手势条余量）+ 影像唯一投影；
  * 底中轮内计数圆牌。文件信息不落卡面——上滑「信息」抽屉（kit.InfoSheet）承载。
  * 跟手位移 / 退场动画由调用侧经 modifier 注入（AnimatedContent 的 content lambda 内）。
+ *
+ * 缩放（iOS 照片口径）：双指捏合 1x–4x（焦点 = 双指中心）、双击 2.5x 放大/还原（焦点 = 点击点）、
+ * 放大后单指平移（边界钳制不出空边）。缩放态经 [onZoomChange] 上报，宿主据此屏蔽滑卡手势；
+ * 本卡随 AnimatedContent 换卡重组，缩放状态自然复位 1x。
  */
 @Composable
 private fun MediaCard(
@@ -475,20 +541,144 @@ private fun MediaCard(
     imageLoader: ImageLoader,
     seenCount: Int,
     totalInRound: Int,
+    onZoomChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val reduced = rememberReducedMotion()
+    val zoomSpec = if (reduced) snap<Float>() else Daylight.spatial<Float>()
+    val scale = remember { Animatable(1f) }
+    val panX = remember { Animatable(0f) }
+    val panY = remember { Animatable(0f) }
+    var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    // 双击动画 Job：捏合起手即取消（手势接管变换，避免两源打架）
+    var tapAnimJob by remember { mutableStateOf<Job?>(null) }
+
+    // ContentScale.Fit 下影像的实际显示尺寸（信箱式留白不计入平移边界）
+    fun displayedSize(): Pair<Float, Float> {
+        val vw = viewSize.width.toFloat()
+        val vh = viewSize.height.toFloat()
+        if (vw <= 0f || vh <= 0f) return 0f to 0f
+        if (item.width <= 0 || item.height <= 0) return vw to vh
+        val f = minOf(vw / item.width, vh / item.height)
+        return item.width * f to item.height * f
+    }
+
+    /** 平移边界：影像边缘最多对齐卡缘（该轴未超出卡面时锁中）。 */
+    fun clampPan(s: Float, x: Float, y: Float): Pair<Float, Float> {
+        val (dw, dh) = displayedSize()
+        val maxX = maxOf(0f, (dw * s - viewSize.width) / 2f)
+        val maxY = maxOf(0f, (dh * s - viewSize.height) / 2f)
+        return x.coerceIn(-maxX, maxX) to y.coerceIn(-maxY, maxY)
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .padding(
                 start = 12.dp,
                 end = 12.dp,
-                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 58.dp,
+                // 顶部余量 = 悬浮 chrome 高 48 + 节奏间距 12（间距律 4dp 基数内，替代散值 58）
+                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 48.dp + 12.dp,
                 bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 14.dp,
             )
             .productShadow(RoundedCornerShape(Daylight.cardRadius))
             .clip(RoundedCornerShape(Daylight.cardRadius))
-            .background(Daylight.parchment),
+            .background(Daylight.parchment)
+            .onSizeChanged { viewSize = it }
+            // 捏合缩放 + 放大态平移：≥2 指即入缩放（消费位移）；单指仅在 >1x 时接管平移，
+            // 1x 下全程不消费 → 外层滑卡手势不受影响。
+            // 受限手势作用域不能调挂起 snapTo：本地变量做权威计算，异步推值进 Animatable 渲染
+            //（同 scope 顺序执行保序；逐帧直读本地变量无延迟）。
+            .pointerInput(item.uri) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    tapAnimJob?.cancel()
+                    var curS = scale.value
+                    var curX = panX.value
+                    var curY = panY.value
+                    var event: PointerEvent
+                    do {
+                        event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.size >= 2) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val centroid = event.calculateCentroid()
+                            val cx0 = viewSize.width / 2f
+                            val cy0 = viewSize.height / 2f
+                            val oldS = curS
+                            curS = (curS * zoom).coerceIn(1f, 4f)
+                            val factor = if (oldS > 0f) curS / oldS else 1f
+                            // 焦点不动：centroid 在缩放前后映射到同一屏幕点，再叠加双指整体平移
+                            curX = centroid.x - cx0 - (centroid.x - cx0 - curX) * factor + pan.x
+                            curY = centroid.y - cy0 - (centroid.y - cy0 - curY) * factor + pan.y
+                            val (px, py) = clampPan(curS, curX, curY)
+                            curX = px
+                            curY = py
+                            val s2 = curS
+                            val x2 = curX
+                            val y2 = curY
+                            scope.launch {
+                                scale.snapTo(s2)
+                                panX.snapTo(x2)
+                                panY.snapTo(y2)
+                            }
+                            pressed.forEach { if (it.positionChange() != Offset.Zero) it.consume() }
+                            onZoomChange(curS > 1.01f)
+                        } else if (pressed.size == 1 && curS > 1f) {
+                            val change = pressed.first()
+                            val delta = change.positionChange()
+                            if (delta != Offset.Zero) {
+                                val (px, py) = clampPan(curS, curX + delta.x, curY + delta.y)
+                                curX = px
+                                curY = py
+                                val x2 = curX
+                                val y2 = curY
+                                scope.launch {
+                                    panX.snapTo(x2)
+                                    panY.snapTo(y2)
+                                }
+                                change.consume()
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
+                    onZoomChange(curS > 1.01f)
+                }
+            }
+            // 双击 2.5x 放大 / 还原（不消费事件，外层单击切换 chrome 语义不变——
+            // 双击序列 = 两次 onTap 相互抵消 + 一次 onDoubleTap，chrome 终态不变）
+            .pointerInput(item.uri) {
+                detectTapGestures(
+                    onDoubleTap = { pos ->
+                        haptics.tap()
+                        if (scale.value > 1.01f) {
+                            onZoomChange(false)
+                            tapAnimJob = scope.launch {
+                                launch { scale.animateTo(1f, zoomSpec) }
+                                launch { panX.animateTo(0f, zoomSpec) }
+                                panY.animateTo(0f, zoomSpec)
+                            }
+                        } else {
+                            val target = 2.5f
+                            val cx0 = viewSize.width / 2f
+                            val cy0 = viewSize.height / 2f
+                            val factor = target / scale.value
+                            // 放大后以点击点为焦点
+                            val nx = pos.x - cx0 - (pos.x - cx0 - panX.value) * factor
+                            val ny = pos.y - cy0 - (pos.y - cy0 - panY.value) * factor
+                            val (px, py) = clampPan(target, nx, ny)
+                            onZoomChange(true)
+                            tapAnimJob = scope.launch {
+                                launch { scale.animateTo(target, zoomSpec) }
+                                launch { panX.animateTo(px, zoomSpec) }
+                                panY.animateTo(py, zoomSpec)
+                            }
+                        }
+                    },
+                )
+            },
     ) {
         AsyncImage(
             // crossfade(200) + parchment 占位（占位挂在 ImageRequest 上：
@@ -504,14 +694,21 @@ private fun MediaCard(
             imageLoader = imageLoader,
             modifier = Modifier
                 .matchParentSize()
+                .graphicsLayer {
+                    // 惰性读取动画状态：捏合/平移逐帧不重组
+                    scaleX = scale.value
+                    scaleY = scale.value
+                    translationX = panX.value
+                    translationY = panY.value
+                }
                 .clip(RoundedCornerShape(Daylight.radiusMd)),
         )
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 12.dp)
-                .onMediaChip(RoundedCornerShape(50))
-                .padding(horizontal = 12.dp, vertical = 5.dp),
+                .onMediaChip(RoundedCornerShape(Daylight.pillRadius))
+                .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
             Text(
                 text = "$seenCount / $totalInRound",

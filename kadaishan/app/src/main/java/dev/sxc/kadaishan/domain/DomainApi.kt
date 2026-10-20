@@ -11,7 +11,7 @@ import dev.sxc.kadaishan.model.Page
 /** 媒体查询唯一入口（架构 §0 数据层收口）。
  *  回查不走此接口：回查只认 RecheckRow 三列（MediaDeleter，刀 3 落地）。 */
 interface MediaSource {
-    /** 分页读取。
+    /** 分页读取（预留扩展点 · 未来扩展 §4：万级媒体规模时启用；当前无生产调用方，卡片流走 ids 全量快照）。
      *  `after` = 已扫描行数游标（limit+offset 口径——架构 §7 明示"keyset 或 limit+offset"均可；≤3000 条规模）；
      *  null = 从头开始。返回 items ≤ limit（过滤后命中数）；
      *  nextKey = 新的已扫描行数，null = 已穷尽。 */

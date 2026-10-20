@@ -78,6 +78,13 @@ val KadaishanTypography: Typography = run {
             fontWeight = FontWeight.SemiBold,
             letterSpacing = (-0.011).em,
         ),
+        // headlineSmall 归位到 Headline 档（22sp/600/负字距）：AlertDialog 标题槽与主张句的默认来源，
+        // 不收编会泄 M3 默认 24sp + 零字距（档位外 + 违反全负字距律）
+        headlineSmall = base.headlineSmall.copy(
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = (-0.011).em,
+        ),
         bodyLarge = base.bodyLarge.copy(
             fontSize = 17.sp,
             lineHeight = 25.sp,
@@ -89,8 +96,18 @@ val KadaishanTypography: Typography = run {
             letterSpacing = (-0.016).em,
             fontWeight = FontWeight.Normal,
         ),
+        // bodySmall / labelMedium 归位最小档（12sp/负字距）：M3 默认正字距（+0.4/+0.5sp）是泄漏面
+        bodySmall = base.bodySmall.copy(
+            fontSize = 12.sp,
+            letterSpacing = (-0.01).em,
+            fontWeight = FontWeight.Normal,
+        ),
         labelLarge = base.labelLarge.copy(fontWeight = FontWeight.Normal),
-        labelMedium = base.labelMedium.copy(fontWeight = FontWeight.Normal),
+        labelMedium = base.labelMedium.copy(
+            fontSize = 12.sp,
+            letterSpacing = (-0.01).em,
+            fontWeight = FontWeight.Normal,
+        ),
         labelSmall = base.labelSmall.copy(
             fontSize = 12.sp,
             letterSpacing = (-0.01).em,

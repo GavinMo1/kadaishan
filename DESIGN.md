@@ -20,6 +20,8 @@ colors:
   on-dark: "#FFFFFF"
   body-muted-on-dark: "#CCCCCC"
   danger: "#D70015"
+  media-scrim: "#80000000"
+  disabled-alpha: 0.5
   blue-tint: "#D9E7F9"
   blue-tint-ink: "#003062"
   error-tint: "#FDECEA"
@@ -172,6 +174,10 @@ components:
 
 **The One Blue Rule.** Action Blue 承担一切可点信号；一个屏幕上的蓝色面积以文字与小控件为限。它越稀少，"能点"的信号越清楚。次级强调不引入第二支彩色。
 
+**The Single-Source Alpha Rule.** 媒体面半透遮罩只有一档 `mediaScrim`（surfaceBlack @50%：暂停指示/已标记牌/提示牌/时间胶囊/深色 Snackbar 同取）；禁用态透明度只有一档 `disabledAlpha`（0.5）。禁止散写 0.38/0.4/0.55/0.7 等独值 alpha。
+
+**The System Bar Follows Content Rule.** 系统栏图标色随当前页面内容动态切换：浅面（图片板/子页/引导页）= 深色图标（SystemBarStyle.light），视频板黑底沉浸 = 浅色图标（SystemBarStyle.dark）；MainContent 按 board/子页态驱动，禁全局固定一种。
+
 **The Photograph Casts the Only Shadow.** 投影是影像的专属属性（productShadow，rgba(0,0,0,0.22)，仅照片卡）。按钮、卡片、文字、chrome 一律零投影。深度由 hairline 与米白分层表达。
 
 ## Typography
@@ -186,7 +192,8 @@ components:
 - **Title**（600，16sp，-0.011em）：面板/抽屉标题、卡片副标题。M3 title\* 系全部归 600 + -0.011em。
 - **Body**（400，17sp / 25sp 行高，-0.022em）：正文主档，iOS body 尺寸。
 - **Body-medium**（400，14sp，-0.016em）：说明文字、次级键、圆片标签、行间辅助。
-- **Label**（400，12sp，-0.01em）：最小档（SectionLabel 13sp 为其在分组标题处的近邻用法）。
+- **Label**（400，12sp，-0.01em）：最小档（SectionLabel 13sp 为其在分组标题处的近邻用法）。主题层已显式归位 headlineSmall（22/600/-0.011，M3 弹窗标题槽默认来源）、bodySmall 与 labelMedium（12/400/-0.01，M3 默认正字距属泄漏面）。
+- **特例登记**：DragHintBadge 手势浮标 15sp/600（媒体面浮层可读性特例，仅此一处）。
 
 ### Named Rules
 
@@ -230,7 +237,7 @@ components:
 | `drawer()` | 气压关门器 | 1.0 / 550 | 抽屉入场/回弹（SpringSheet） |
 | `pop()` | 落定 · 轻过冲 | 0.62 / 700 | 勾选落定等达成动作 |
 
-配套规则：手势松手速度经 `VelocityTracker` 进入退场行程（甩得越快飞得越远，双板同手感）；`SpringSheet`（自绘抽屉物理层）承接全部抽屉浮层（InfoSheet / 结算面板）——入场 drawer 到顶、把手拖拽跟手、≥140dp 判 dismiss、遮罩/返回先退场再移除；结算面板 CONFIRMING/VERIFYING 相位经 `closable=false` 锁关闭（把手可拉但回弹，遮罩/返回无效）。峰值时刻：结果页「已释放」数值滚动落定（settle 0→1）。
+配套规则：手势松手速度经 `VelocityTracker` 进入退场行程（甩得越快飞得越远，双板同手感）；`SpringSheet`（自绘抽屉物理层）承接信息抽屉（InfoSheet）；结算使用独立全屏模态页——入场 drawer 到顶、把手拖拽跟手、≥140dp 判 dismiss、遮罩/返回先退场再移除；结算面板 CONFIRMING/VERIFYING 相位锁关闭（系统返回无效）。峰值时刻：结果页「已释放」数值滚动落定（settle 0→1）。
 
 ## Shapes
 
@@ -251,7 +258,19 @@ components:
 - **Pressed:** 整体 scale(0.95)；禁用 = 底色 35% 透明度。
 - **Secondary（PearlButton）:** pearl 底 + 1.5dp dividerSoft 软环 + ink-strong 字 14sp/-0.016em，11dp 圆角，内距 14×8dp。
 - **On-dark（OnDarkButton）:** 白 @14% 半透底 + 白字，pill，视频板终态次级动作。
-- **Text button:** 蓝字透明底（15sp，chrome 内；M3 TextButton 其余场合），居中弱出口（"返回"）。
+- **Text button（TextActionButton，kit）:** 蓝字透明底 14sp/(-0.016)em，48dp 触达，无水波纹、按压渐隐 50%、内置 tap 回执；禁用 = 弱墨 50%。替代全部 M3 TextButton 场景（chrome 内、一键全不选、返回、全选/全不选、改授全部）。
+
+### Alerts（DaylightAlert，kit）
+
+iOS 居中弹窗，替代 M3 AlertDialog（其右下按钮排布 + 大圆角是禁用形态）：312dp 上限宽白卡 radiusLg、标题居中 17sp/600、说明 13sp 弱墨居中、按钮区 1px hairline 通栏分隔、按钮整行可点（1~2 枚，双钮左右均分 + 竖 hairline、17sp；取消 400 / 确认 600 / 破坏 danger+600）、按压渐隐、内置 tap 回执；content 槽承自定义内容（输入框 = parchment 填充底 + radiusSm 无描边，禁 M3 描边输入框）。
+
+### 照片缩放（图片板 MediaCard）
+
+iOS 照片口径：双指捏合 1x–4x（焦点 = 双指中心，变换在卡内裁切）、双击 2.5x 放大/还原（spatial 弹簧 + tap 回执，焦点 = 点击点）、放大态单指平移（按 ContentScale.Fit 实际显示尺寸钳制边界，信箱留白不计）。>1x 时滑卡/撤回/信息手势让位平移；换卡随 AnimatedContent 重组自动复位 1x。
+
+### Snackbar（深色胶囊，视频板）
+
+M3 默认 Snackbar 外观（深灰 4dp 圆角）为禁用形态。视频板撤回提示 = pill + mediaScrim 底 + 白字 14sp + 动作键 primaryOnDark 14sp/600；navigationBarsPadding + bottom 48dp。
 
 ### Chips / 圆片
 
@@ -269,9 +288,13 @@ components:
 
 ### Inputs / Fields
 
-- **Switch:** Action Blue 轨 + 白拇选中；未选 hairline 轨 + canvas 拇（SwitchDefaults 显式收编）。
-- **Slider:** Action Blue 活轨 + canvas 拇 + hairline 底轨。
-- 无文本输入场（本 App 无表单）。
+- **Switch:** Action Blue 轨 + 白拇选中；未选 hairline 轨 + canvas 拇（SwitchDefaults 显式收编）；**拇子纯白无图标**（`thumbContent = {}` 去除 M3 默认内嵌对勾）。
+- **Slider:** Action Blue 活轨 + canvas 拇 + hairline 底轨；**拇子 = 28dp 白圆 + 1px hairline 描边自绘**（iOS UISlider 语汇，替代 M3 竖条拇 + 按压圆晕）。
+- **文本输入（仅精输弹窗一处）:** parchment 填充底 + radiusSm 无描边（TextField 指示线显式透明），禁 OutlinedTextField 描边形态。
+
+### 列表行按压（daylightRowClickable，kit）
+
+页面层可点行/控件一律 `indication = null`（禁水波纹——Material 签名式反馈）；iOS 语汇的按压反馈 = 整行叠加 6% 墨高亮（daylightRowClickable 内置，背景先于 padding 上链）或文字键渐隐 50%（TextActionButton 内置）。
 
 ### Navigation
 
@@ -283,9 +306,11 @@ components:
 
 iOS 多选语汇：24dp 圆、未选 1.5dp checkRing 灰环 → 选中 Action Blue 实底 + 白勾（16dp）。结算勾选行、回收站行共用。
 
-### 结算底部抽屉（SettlementPanel）
+### 结算页（SettlementPanel）
 
-M3 ModalBottomSheet 显式收编：canvas 底、hairline 把手、tonalElevation 0。复核行 = 圆环勾选 + 48dp 圆角缩略图 + 名称 + 右对齐值；危险警示块 = error-tint 底 8dp 圆角 + danger 字 600。
+全屏复核页沿用 Daylight canvas、单字族与弹簧入场。顶部只保留返回和全选/全不选，标题左对齐，副文案交代本轮浏览数与标记数。主体为自适应缩略图网格（最小列宽 96dp、8dp 间隔、radiusMd、右上圆环勾选），不以文件名列表占据视觉中心。底部固定主操作，显示勾选数量和容量；永久删除收在删除方式「更改」中，开启后始终显示危险提示，超限禁止提交但允许继续取消勾选。
+
+无删除项直接继续整理。完整回查全部成功后回到卡片流，用 Snackbar 给出数量与找回入口；异常结果或冷启动恢复才显示结果页。异常页突出未处理数量，只列差异项，非零状态计数保持可追查；内容滚动，底部操作区固定且可在大字体下滚动，统一「继续整理」出口。CONFIRMING/VERIFYING 消费返回键并锁关闭。
 
 ### Signature：触觉回执（Haptics）
 

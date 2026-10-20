@@ -38,37 +38,52 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
-  background:var(--studio);
+  background:
+    radial-gradient(900px 480px at 12% -10%,#E9EBF3 0%,rgba(233,235,243,0) 60%),
+    radial-gradient(820px 520px at 96% 112%,#E6E9F0 0%,rgba(230,233,240,0) 55%),
+    var(--studio);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","MiSans","PingFang SC","Microsoft YaHei UI","Segoe UI",Roboto,sans-serif;
   color:var(--ink);
   -webkit-font-smoothing:antialiased;
   display:flex;flex-direction:column;align-items:center;
-  padding:28px 16px 40px;
+  padding:40px 20px 56px;
 }
+::selection{background:rgba(0,102,204,.16)}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}
 [hidden]{display:none!important}
 
 /* ── 页面标题 ─────────────────────────── */
-.pagehead{max-width:920px;width:100%;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
-.pagehead h1{font-size:20px;font-weight:600;letter-spacing:-.011em}
+.pagehead{max-width:960px;width:100%;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+.pagehead h1{font-size:24px;font-weight:600;letter-spacing:-.018em}
+.pagehead h1 .dot{color:var(--blue)}
 .pagehead p{font-size:13px;color:var(--ink-sub);letter-spacing:-.01em}
-.stagenote{max-width:920px;width:100%;font-size:12px;color:var(--ink-sub);letter-spacing:-.008em;margin-bottom:18px}
+.pagehead code{background:var(--pearl);border:1px solid var(--hairline);border-radius:6px;padding:1px 6px;font-size:12px;font-family:inherit}
+.stagenote{max-width:960px;width:100%;font-size:12.5px;color:var(--ink-sub);letter-spacing:-.008em;line-height:1.65;margin-bottom:24px}
 .stagenote b{color:var(--ink-strong);font-weight:600}
 
 /* ── 舞台：左切换栏 + 手机 ─────────────── */
-.stage{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
-.rail{display:flex;flex-direction:column;gap:6px;min-width:168px}
-.rail .rail-label{font-size:12px;color:var(--ink-sub);letter-spacing:.02em;padding:0 12px;margin:6px 0 2px}
+.stage{display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap;justify-content:center;max-width:960px;width:100%}
+.rail{
+  display:flex;flex-direction:column;gap:4px;min-width:200px;
+  background:var(--canvas);border:1px solid var(--hairline);border-radius:18px;
+  padding:12px;box-shadow:0 2px 10px rgba(0,0,0,.04);
+  position:sticky;top:24px;
+}
+.rail .rail-label{font-size:11px;font-weight:600;color:var(--ink-sub);letter-spacing:.08em;padding:4px 12px 8px;margin:0}
 .rail button{
-  appearance:none;border:0;background:transparent;border-radius:11px;
+  appearance:none;border:0;background:transparent;border-radius:12px;
+  display:flex;align-items:center;gap:10px;
   padding:11px 12px;font:inherit;font-size:15px;color:var(--ink-strong);text-align:left;cursor:pointer;
   transition:background .18s var(--settle),color .18s var(--settle);
 }
-.rail button:hover{background:#EDEDF0}
-.rail button.on{background:var(--canvas);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.05)}
-.rail .tok{margin-top:14px;border-top:1px solid var(--hairline);padding:12px 12px 0;display:flex;flex-direction:column;gap:8px}
+.rail button .ic{width:8px;height:8px;border-radius:50%;background:var(--check-ring);flex:none;transition:background .18s var(--settle),transform .18s var(--settle)}
+.rail button:hover{background:var(--parchment)}
+.rail button.on{background:var(--parchment);color:var(--ink);font-weight:600}
+.rail button.on .ic{background:var(--blue);transform:scale(1.3)}
+.rail .tok{margin-top:10px;border-top:1px solid var(--hairline);padding:14px 12px 4px;display:flex;flex-direction:column;gap:8px}
 .rail .tok .sw{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-sub);letter-spacing:-.008em}
 .rail .tok .sw i{width:22px;height:22px;border-radius:6px;border:1px solid rgba(0,0,0,.06);flex:none}
-.rail .tok .row{font-size:11.5px;color:var(--ink-sub);letter-spacing:-.008em;line-height:1.5}
+.rail .tok .row{font-size:11.5px;color:var(--ink-sub);letter-spacing:-.008em;line-height:1.6}
 
 /* ── iPhone 机身 ─────────────────────── */
 .device{
@@ -79,7 +94,8 @@ body{
   position:relative;width:370px;height:800px;border-radius:46px;overflow:hidden;background:var(--canvas);
 }
 .screen .view{position:absolute;inset:0;display:none}
-.screen .view.on{display:block}
+.screen .view.on{display:block;animation:viewin .32s var(--settle)}
+@keyframes viewin{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
 
 /* ── 状态栏 ──────────────────────────── */
 .statusbar{
@@ -112,6 +128,7 @@ body{
 .photocard .count-chip{
   position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
   background:var(--chip);border-radius:50px;padding:5px 12px;pointer-events:none;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
   font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums;
 }
 /* 拖动方向语义浮标（左=删除红 / 右=跳过白；随拖动进度渐显） */
@@ -124,12 +141,13 @@ body{
 .dragbadge.right{right:20px;background:#fff;color:var(--ink-strong)}
 .dragbadge.bottom{left:50%;bottom:56px;transform:translateX(-50%);background:#fff;color:var(--ink-strong)}
 
-/* 悬浮 chrome（半透白一行；点按照片切换显隐） */
+/* 悬浮 chrome（半透白一行 + 毛玻璃；点按照片切换显隐） */
 .chromebar{
   position:absolute;top:52px;left:12px;right:12px;z-index:30;
   display:flex;align-items:center;gap:10px;
   background:var(--chrome);border:1px solid var(--hairline);border-radius:18px;
   padding:8px 8px 8px 12px;
+  backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);
   transition:transform .38s var(--settle),opacity .28s var(--settle);
 }
 .chromebar.hid{transform:translateY(-130%);opacity:0;pointer-events:none}
@@ -188,7 +206,7 @@ body{
   background:rgba(229,229,234,.96);color:var(--ink);font-size:13.5px;white-space:nowrap;
   box-shadow:0 4px 18px rgba(0,0,0,.25);
 }
-.vsnack u{color:var(--primary);font-weight:600;cursor:pointer;text-decoration:none}
+.vsnack u{color:var(--blue);font-weight:600;cursor:pointer;text-decoration:none}
 .vhint{position:absolute;bottom:64px;left:24px;z-index:20;font-size:12.5px;color:rgba(255,255,255,.72);letter-spacing:-.01em;pointer-events:none}
 /* 视频板：点按层 / 暂停指示 / 进度条 */
 .vtap{position:absolute;inset:0;cursor:pointer}
@@ -337,25 +355,48 @@ body{
   radial-gradient(120% 90% at 75% 25%,#4A3B57 0%,rgba(74,59,87,0) 55%),
   linear-gradient(168deg,#322B3E 0%,#191522 60%,#0B0910 100%)}
 
+/* 换卡加载态：扫光 shimmer（占位"照片"载入反馈） */
+.photocard .img::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(105deg,rgba(255,255,255,0) 32%,rgba(255,255,255,.38) 50%,rgba(255,255,255,0) 68%);
+  background-size:220% 100%;background-position:120% 0;
+  opacity:0;pointer-events:none;transition:opacity .25s var(--settle);
+}
+.photocard.loading .img::after{opacity:1;animation:shimmer .75s linear infinite}
+@keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
+
+/* 操作回执 toast（预览演示反馈；aria-live 播报） */
+.toast{
+  position:absolute;left:50%;bottom:96px;transform:translateX(-50%) translateY(10px);z-index:70;
+  background:rgba(29,29,31,.92);color:#fff;border-radius:50px;padding:10px 18px;
+  font-size:13.5px;letter-spacing:-.01em;white-space:nowrap;max-width:88%;
+  overflow:hidden;text-overflow:ellipsis;
+  opacity:0;pointer-events:none;transition:opacity .25s var(--settle),transform .25s var(--settle);
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:.01ms!important;animation:none!important}
 }
-@media (max-width:860px){
+@media (max-width:960px){
   .stage{flex-direction:column;align-items:center}
-  .rail{flex-direction:row;flex-wrap:wrap;justify-content:center;max-width:392px}
+  .rail{position:static;flex-direction:row;flex-wrap:wrap;justify-content:center;max-width:430px;padding:8px;gap:4px}
   .rail .rail-label{display:none}
-  .rail button{padding:10px 14px}
+  .rail button{padding:10px 14px;font-size:14px}
+  .rail button .ic{display:none}
   .rail .tok{display:none}
 }
-@media (max-width:420px){
-  .device{transform:scale(.86);transform-origin:top center;margin-bottom:-110px}
+@media (max-width:430px){
+  body{padding:20px 8px 32px}
+  .pagehead h1{font-size:20px}
+  .device{transform:scale(.84);transform-origin:top center;margin-bottom:-132px}
 }
 </style>
 </head>
 <body>
 
 <header class="pagehead">
-  <h1>卡待删 · Daylight 预览</h1>
+  <h1>卡待删 <span class="dot">·</span> Daylight 预览</h1>
   <p>iOS 质感重设计 · token 与 <code>ui/kit/DesignKit.kt</code> 一致</p>
 </header>
 <p class="stagenote">可交互：<b>拖动照片卡</b>（跟手 + 倾斜，过阈值松手 = 标记退场换下一张）· <b>点按照片</b>收起/唤出顶栏 · 页签/勾选/开关都能点。“照片”为 CSS 占位色场。</p>
@@ -363,11 +404,11 @@ body{
 <div class="stage">
   <nav class="rail" id="rail">
     <div class="rail-label">界面</div>
-    <button data-view="photo" class="on">图片板块</button>
-    <button data-view="video">视频板块</button>
-    <button data-view="settle">结算抽屉</button>
-    <button data-view="trash">回收站</button>
-    <button data-view="settings">设置</button>
+    <button data-view="photo" class="on"><i class="ic"></i>图片板块</button>
+    <button data-view="video"><i class="ic"></i>视频板块</button>
+    <button data-view="settle"><i class="ic"></i>结算抽屉</button>
+    <button data-view="trash"><i class="ic"></i>回收站</button>
+    <button data-view="settings"><i class="ic"></i>设置</button>
     <div class="tok">
       <div class="sw"><i style="background:#0066CC"></i>Action Blue · 唯一强调色</div>
       <div class="sw"><i style="background:#F5F5F7"></i>Parchment · 分组容器</div>
@@ -544,6 +585,9 @@ body{
         <div class="homebar"></div>
       </section>
 
+      <!-- 操作回执 toast（演示反馈） -->
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
     </div>
   </div>
 </div>
@@ -560,6 +604,17 @@ body{
     rail.querySelectorAll('button').forEach(function(x){x.classList.toggle('on', x===b)});
     views.forEach(function(v){v.classList.toggle('on', v.dataset.view===b.dataset.view)});
   });
+
+  /* ── 操作回执 toast（仅展示反馈，不影响业务逻辑） ── */
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function toast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2200);
+  }
 
   /* ── 分段页签：滑片 ── */
   var seg = document.getElementById('seg');
@@ -595,6 +650,10 @@ body{
   function apply(){ var p = photos[idx];
     cardimg.className = 'img ' + p.cls;
     counter.textContent = seen + ' / ' + total;
+    /* 换卡加载态：短暂扫光 shimmer，模拟"照片"载入 */
+    card.classList.add('loading');
+    clearTimeout(card._lt);
+    card._lt = setTimeout(function(){ card.classList.remove('loading'); }, 700);
   }
   function next(){ idx = (idx+1) % photos.length; if(seen < total) seen++; apply(); }
 
@@ -769,7 +828,9 @@ body{
     refreshSettle();
   });
   if (confirmpill) confirmpill.addEventListener('click', function(){
-    if (slist.querySelectorAll('.ccheck.on').length===0){ /* 跳过本轮 */ }
+    var n = slist.querySelectorAll('.ccheck.on').length;
+    if (n===0){ toast('已开始下一轮（演示）'); return; }
+    toast(permsw.classList.contains('on') ? '已请求永久删除（演示）' : '已移入回收站（演示）');
   });
 
   /* ── 回收站勾选 ── */
@@ -793,6 +854,12 @@ body{
     var n = document.querySelectorAll('.tcheck.on').length;
     if (tcount) tcount.textContent = n;
   }
+  /* 回收站操作按钮：点击回执（演示） */
+  document.querySelectorAll('[data-view="trash"] .pill').forEach(function(b){
+    b.addEventListener('click', function(){
+      toast(b.classList.contains('danger') ? '已清空回收站（演示）' : '已找回所选（演示）');
+    });
+  });
 
   /* ── 设置：勾选行 / 开关 ── */
   document.querySelectorAll('.checkrow').forEach(function(r){

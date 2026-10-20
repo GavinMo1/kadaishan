@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动图标前景（Daylight 语汇）：叠放双卡 = 相册整理意象；后卡 blue-tint、前卡 Action Blue + 白勾。
+     禁渐变禁阴影；内容收在安全区（中心 66dp 圆）内。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 后卡：blue-tint，微后倾 -->
+    <group
+        android:rotation="-10"
+        android:pivotX="58"
+        android:pivotY="50">
+        <path
+            android:fillColor="#D9E7F9"
+            android:pathData="M51,34 H65 Q71,34 71,40 V60 Q71,66 65,66 H51 Q45,66 45,60 V40 Q45,34 51,34 Z" />
+    </group>
+
+    <!-- 前卡：Action Blue + 白勾（整理完成语义），微前倾 -->
+    <group
+        android:rotation="8"
+        android:pivotX="50"
+        android:pivotY="58">
+        <path
+            android:fillColor="#0066CC"
+            android:pathData="M43,42 H57 Q63,42 63,48 V68 Q63,74 57,74 H43 Q37,74 37,68 V48 Q37,42 43,42 Z" />
+        <path
+            android:pathData="M44,58 L48.5,62.5 L57,53"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:fillColor="#00000000" />
+    </group>
+</vector>

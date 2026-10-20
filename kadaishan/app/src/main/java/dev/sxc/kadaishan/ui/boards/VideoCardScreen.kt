@@ -1,6 +1,7 @@
 package dev.sxc.kadaishan.ui.boards
 
 import android.graphics.Matrix
+import android.graphics.drawable.ColorDrawable
 import android.view.TextureView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -14,14 +15,17 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -49,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,8 +65,8 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -70,6 +75,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
+import coil.request.ImageRequest
 import dev.sxc.kadaishan.ui.kit.Daylight
 import dev.sxc.kadaishan.ui.kit.DragHintBadge
 import dev.sxc.kadaishan.ui.kit.InfoSheet
@@ -90,6 +96,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 // ═══ 视频板块（PRD §4.2 抖音式：全屏播放 + 滑动标记；media3 播放核心单实例归本文件）═══
 // 全屏播放：单 ExoPlayer（VideoCardViewModel 持有，onCleared 释放）+ TextureView surface，
@@ -110,13 +117,15 @@ fun VideoCardScreen(
     exifReader: ExifReader,
     deleter: MediaDeleter,
     pendingSettlement: PendingSettlementRepository,
+    history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val vm: VideoCardViewModel = viewModel(
         factory = viewModelFactory {
-            initializer { VideoCardViewModel(source, settings, context.applicationContext) }
+            initializer { VideoCardViewModel(source, settings, context.applicationContext, history) }
         },
     )
     val imageLoader = remember(context) {
@@ -124,6 +133,13 @@ fun VideoCardScreen(
         ImageLoader.Builder(context)
             .components { add(VideoFrameDecoder.Factory()) }
             .build()
+    }
+    // 换卡零黑闪：海报解码预热——未来 5 项预取进 Coil 内存缓存（与图片板同策略；命中即免解码空窗）
+    // key 含 items.size：预取入缓存（size 变化）时重跑一次，补上切入时尚未加载完成的未来项
+    LaunchedEffect(vm.currentId, vm.items.size) {
+        vm.upcomingUris(5).forEach { uri ->
+            imageLoader.enqueue(ImageRequest.Builder(context).data(uri).build())
+        }
     }
     var settlementOpen by rememberSaveable { mutableStateOf(false) }
     val haptics = rememberHaptics()
@@ -144,8 +160,11 @@ fun VideoCardScreen(
         label = "vFollowX",
     )
     // M4：轮末自动弹结算（含 0 标记 → 面板空态「本轮无删除项」）；面板关闭后轮末屏留「查看结算」重入口
-    LaunchedEffect(vm.roundEnded, vm.currentId) {
-        if (vm.roundEnded && vm.currentId == null) settlementOpen = true
+    LaunchedEffect(vm.ready, vm.roundEnded, vm.currentId) {
+        if (vm.ready && vm.currentId == null) {
+            if (vm.markedCount > 0) settlementOpen = true
+            else if (vm.roundEnded) vm.startNextRound()
+        }
     }
 
     // 进入 → 恢复播放；离开 → 停播 + 卸 surface（会话状态按进程存活期保留）
@@ -164,6 +183,15 @@ fun VideoCardScreen(
 
     // 跳后 Snackbar「已标记第 N 个 · 撤回」（Short = 4s ≥ 1.5s；撤回 = unmark 该 id）
     val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(vm.actionError) {
+        vm.actionError?.let { message ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
+            if (vm.actionError == message) vm.dismissActionError()
+        }
+    }
+
+    val screenScope = rememberCoroutineScope()
     LaunchedEffect(vm.snack) {
         val event = vm.snack ?: return@LaunchedEffect
         val result = snackbarHostState.showSnackbar(
@@ -171,7 +199,10 @@ fun VideoCardScreen(
             actionLabel = "撤回",
             duration = SnackbarDuration.Short,
         )
-        if (result == SnackbarResult.ActionPerformed) vm.undoSnack(event.id)
+        if (result == SnackbarResult.ActionPerformed) {
+            haptics.reject()
+            vm.undoSnack(event.id)
+        }
         vm.ackSnack(event.seq)
     }
 
@@ -276,7 +307,12 @@ fun VideoCardScreen(
             Box(modifier = Modifier.fillMaxSize()) {
                 id?.let { key -> vm.items[key] }?.let { item ->
                     AsyncImage(
-                        model = item.uri,
+                        // 黑底占位 + crossfade(200)：换卡解码空窗不透黑闪（与图片板 parchment 占位同策略）
+                        model = ImageRequest.Builder(context)
+                            .data(item.uri)
+                            .placeholder(ColorDrawable(android.graphics.Color.BLACK))
+                            .crossfade(200)
+                            .build(),
                         contentDescription = item.displayName.ifBlank { "未命名媒体" },
                         imageLoader = imageLoader,
                         contentScale = ContentScale.Fit,
@@ -304,12 +340,19 @@ fun VideoCardScreen(
 
         // ③ 终态 / 加载画面（画在 surface 之上）
         when {
-            !vm.ready -> Text(
-                text = "加载中…",
+            // 加载语汇统一：Spinner + 弱化文案（与结算面板 LoadingContent 同构；瞬态缺行只显 Spinner）
+            !vm.ready -> Column(
                 modifier = Modifier.align(Alignment.Center),
-                color = Daylight.onDark.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.bodyLarge,
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spinner()
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "加载中…",
+                    color = Daylight.bodyMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
 
             currentId != null && poster == null -> Spinner(
                 modifier = Modifier.align(Alignment.Center),
@@ -332,7 +375,7 @@ fun VideoCardScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "标记 ${vm.markedCount} 项",
-                    color = Daylight.onDark.copy(alpha = 0.72f),
+                    color = Daylight.bodyMuted,
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.height(28.dp))
@@ -353,19 +396,22 @@ fun VideoCardScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "池已尽 · 没有更多内容",
+                    text = "暂时没有待整理的视频",
                     color = Daylight.onDark,
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 )
                 Spacer(modifier = Modifier.height(28.dp))
-                PillButton(
-                    text = "查看结算",
+                if (vm.markedCount > 0) PillButton(
+                    text = "查看待删除项",
                     onClick = { settlementOpen = true },
+                ) else PillButton(
+                    text = "检查新视频",
+                    onClick = { vm.startNextRound() },
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 OnDarkButton(
-                    text = "开始下一轮",
-                    onClick = { vm.startNextRound() },
+                    text = "重新整理已保留项目",
+                    onClick = { vm.reviewKeptAgain() },
                 )
             }
         }
@@ -399,14 +445,14 @@ fun VideoCardScreen(
                     .align(Alignment.Center)
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.4f)),
+                    .background(Daylight.mediaScrim),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.PlayArrow,
                     contentDescription = "已暂停，点按继续",
                     tint = Daylight.onDark,
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(32.dp),
                 )
             }
         }
@@ -419,8 +465,8 @@ fun VideoCardScreen(
                     .statusBarsPadding()
                     .padding(top = 8.dp, start = 12.dp)
                     .clip(RoundedCornerShape(Daylight.pillRadius))
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.5f))
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .background(Daylight.mediaScrim)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
@@ -453,7 +499,8 @@ fun VideoCardScreen(
             VideoScrubber(
                 positionMs = vm.positionMs,
                 durationMs = vm.durationMs,
-                onSeek = { f ->
+                onSeek = { f -> vm.seekTo(f) },
+                onSeekFinished = { f ->
                     haptics.tick()
                     vm.seekTo(f)
                 },
@@ -469,10 +516,10 @@ fun VideoCardScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 96.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.5f))
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                    .padding(bottom = 48.dp)
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
+                    .background(Daylight.mediaScrim)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
             ) {
                 Text(
                     text = "左滑删除 · 右滑保留 · 长按信息",
@@ -482,11 +529,51 @@ fun VideoCardScreen(
             }
         }
 
-        // ⑥ Snackbar（M8：上移避开右下删除钮）
+        // ⑥ 撤回提示（Daylight 胶囊：pill + mediaScrim 底 + 深底强调蓝动作，替代 M3 默认 Snackbar 外观）
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp),
-        )
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 48.dp),
+        ) { data ->
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
+                    .background(Daylight.mediaScrim)
+                    .padding(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = data.visuals.message,
+                    color = Daylight.onDark,
+                    fontSize = 14.sp,
+                    letterSpacing = (-0.016).em,
+                )
+                data.visuals.actionLabel?.let { label ->
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 40.dp)
+                            .clip(RoundedCornerShape(Daylight.radiusSm))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { data.performAction() }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            color = Daylight.primaryOnDark,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = (-0.016).em,
+                        )
+                    }
+                }
+            }
+        }
 
         // ⑦ 信息抽屉（kit 共享件）：当前视频头图（Coil 视频帧）+ 分组行；下滑/点遮罩/系统返回关闭
         if (vm.infoOpen) {
@@ -503,10 +590,24 @@ fun VideoCardScreen(
     if (settlementOpen) {
         SettlementPanel(
             markedIds = vm.markedSnapshot(),
-            totalInRound = vm.currentRoundSize,
+            totalInRound = vm.visitedIds.size,
             source = source,
             deleter = deleter,
             pendingStore = pendingSettlement,
+            onKeep = { history.setKept(it, true) },
+            onCompleted = { message, canRestore ->
+                settlementOpen = false
+                vm.startNextRound()
+                screenScope.launch {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    if (snackbarHostState.showSnackbar(
+                            message = message,
+                            actionLabel = if (canRestore) "找回" else null,
+                            duration = SnackbarDuration.Short,
+                            withDismissAction = true,
+                        ) == SnackbarResult.ActionPerformed) onOpenTrash()
+                }
+            },
             onNextRound = {
                 settlementOpen = false
                 vm.startNextRound()
@@ -524,6 +625,7 @@ fun VideoCardScreen(
 /**
  * 底部进度条（iOS 播放器语汇）：静息 = 3dp 细线（白 30% 轨 + 白进度）；
  * 按住 = 出 14dp 白拇 + 时间胶囊「0:12 / 1:03」，横向拖动 seek。
+ * 拖动中节流实时 seek（100ms，画面跟手出帧，iOS 播放器手感）；松手 onSeekFinished 收尾（带回执）。
  * 垂直滑动不被本条消费 → 上下滑翻页不受影响。
  */
 @Composable
@@ -532,6 +634,7 @@ private fun VideoScrubber(
     durationMs: Long,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    onSeekFinished: (Float) -> Unit = onSeek,
 ) {
     var scrubbing by remember { mutableStateOf(false) }
     var fraction by remember { mutableStateOf(0f) }
@@ -549,9 +652,9 @@ private fun VideoScrubber(
         if (scrubbing && durationMs > 0) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Daylight.surfaceBlack.copy(alpha = 0.55f))
-                    .padding(horizontal = 12.dp, vertical = 5.dp),
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
+                    .background(Daylight.mediaScrim)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
             ) {
                 Text(
                     text = "${formatDuration((fraction * durationMs).toLong())} / ${formatDuration(durationMs)}",
@@ -566,18 +669,25 @@ private fun VideoScrubber(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .height(28.dp)
-                .pointerInput(onSeek) {
+                .pointerInput(onSeek, onSeekFinished) {
+                    var lastLiveSeekMs = 0L
                     detectHorizontalDragGestures(
                         onDragStart = {
                             scrubbing = true
+                            lastLiveSeekMs = 0L
                         },
                         onHorizontalDrag = { change, _ ->
                             // 绝对位置取值（标准拖动条手感；change.position.x 恒为 Float，不依赖回调签名版本）
                             change.consume()
                             fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            // 拖动中节流实时 seek：100ms 一档，画面跟手出帧（iOS 播放器手感）
+                            if (change.uptimeMillis - lastLiveSeekMs >= 100L) {
+                                lastLiveSeekMs = change.uptimeMillis
+                                onSeek(fraction)
+                            }
                         },
                         onDragEnd = {
-                            onSeek(fraction)
+                            onSeekFinished(fraction)
                             scrubbing = false
                         },
                         onDragCancel = { scrubbing = false },
@@ -590,7 +700,7 @@ private fun VideoScrubber(
                     .align(Alignment.CenterStart)
                     .fillMaxWidth()
                     .height(3.dp)
-                    .clip(RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
                     .background(Daylight.onDark.copy(alpha = 0.3f)),
             )
             Box(
@@ -598,7 +708,7 @@ private fun VideoScrubber(
                     .align(Alignment.CenterStart)
                     .fillMaxWidth(shown)
                     .height(3.dp)
-                    .clip(RoundedCornerShape(50))
+                    .clip(RoundedCornerShape(Daylight.pillRadius))
                     .background(Daylight.onDark),
             )
             if (scrubbing) {

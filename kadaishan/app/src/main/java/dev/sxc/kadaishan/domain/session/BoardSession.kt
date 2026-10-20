@@ -58,6 +58,9 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
     /** 本轮标记（仅内存；未结算 = 未删除；startNewRound 丢弃）。 */
     private val marks = LinkedHashSet<MediaKey>()
 
+    private val kept = LinkedHashSet<MediaKey>()
+    val keptIds: Set<MediaKey> get() = kept.toSet()
+
     /** 当前应展示项；null = 轮末（roundEnded()）或池已穷尽（含空会话）。
      *  轮末主动置 null：不泄漏本轮之外的下一条、不留可滑僵尸卡；调用方据 roundEnded() 分辨两种 null。 */
     val current: MediaKey?
@@ -118,22 +121,38 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
      *  undo() 撤回跳过 = 拨回该处 = 重新入池、可再滑。非当前项 / 轮末 / 池尽 = 无操作。 */
     fun skip(id: MediaKey) {
         if (!isCurrent(id)) return
+        kept.add(id)
         undoStack.addLast(Frame(SessionAction.Skip(id), pointer))
         pointer++
     }
 
+    /** 撤回可用（栈非空）：UI 置灰判据的单一来源（调用方不得再维护镜像计数）。 */
+    val undoAvailable: Boolean
+        get() = undoStack.isNotEmpty()
+
     /** 栈式连续撤回：逆转栈顶动作（标记出集；跳过重新入池）并把展示拨回被撤项（帧 at）。
      *  指针只降不升：回看帧与更旧帧连续撤回后 at 可能 ≥ 当前指针，此时仅撤标记、不前跳。
      *  false = 栈空（撤回按钮置灰判据，与轮末相互独立）。 */
+    /** Persistent decisions that undo will revoke; inspect before mutating the session. */
+    fun keptIdsRevokedByUndo(): Set<MediaKey> {
+        val frame = undoStack.lastOrNull() ?: return emptySet()
+        return kept.intersect(order.drop(minOf(pointer, frame.at)).toSet())
+    }
+
     fun undo(): Boolean {
         val frame = undoStack.removeLastOrNull() ?: return false
         if (frame.action is SessionAction.Mark) marks.remove(frame.action.id)
         if (frame.at < pointer) pointer = frame.at
+        // Undo can rewind past later advances/actions: all decisions in that tail become undecided.
+        kept.removeAll(order.drop(pointer).toSet())
         return true
     }
 
-    /** 本轮条数已走完：恰好 roundSize 条消耗（护栏保证不会超过，故用 ==）。 */
-    fun roundEnded(): Boolean = pointer - roundStart == roundSize
+    /** 本轮条数已走完：已消耗 ≥ roundSize。用 >= 而非 ==：updateRoundSize 可把轮值缩到
+     *  低于当前已消耗值（无护栏），此时 consumed 恒不等于 roundSize，== 会导致本轮永不结束
+     *  （结算不再触发、一路滑到池尽）。>= 下「缩到已消耗值以内 → 本轮随即结束」成立；
+     *  轮末再放大（consumed < 新值）本轮复活，语义不变。 */
+    fun roundEnded(): Boolean = pointer - roundStart >= roundSize
 
     /** 开新轮：轮内计数与标记重置（上轮未结算标记丢弃 = 未删除）、撤回栈清空；
      *  指针与 idOrder 快照不动 —— 已展示项与跳过项结构性不重入。 */

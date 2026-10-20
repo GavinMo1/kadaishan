@@ -107,12 +107,6 @@ class MediaDeleter(private val resolver: ContentResolver) {
         }
         result.sortedBy { it.dateExpiresSec ?: Long.MAX_VALUE }
     }
-
-    /** 失败批降档切批（PRD §5.2：逐档减半、向下取整、下限 5，每档只重试 1 次）。
-     *  只对失败批重切为更小子批重发；≤5 项无可降档 → 空列表（调用方计失败、跳下一批）。
-     *  子批尺寸严格递减，递归降档必终止。 */
-    fun fallbackSubBatches(items: List<SnapItem>): List<List<SnapItem>> {
-        if (items.size <= 5) return emptyList()
-        return items.chunked(maxOf(items.size / 2, 5))
-    }
 }
+
+/** 失败批降档逻辑已收编至 domain.settle.BatchFlow（纯 JVM 可测）；本类只保留 MediaStore 写入与回查。 */

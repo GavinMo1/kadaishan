@@ -14,6 +14,7 @@ import dev.sxc.kadaishan.domain.classify.RuleChainClassifier
  *  用 applicationContext 构造，避免持有 Activity。 */
 class AppContainer(context: android.content.Context) {
     val settings = SettingsRepository(context)
+    val reviewHistory = dev.sxc.kadaishan.data.ReviewHistoryRepository.get(context)
     val classifier: ImageClassifier = RuleChainClassifier()
     val mediaSource: MediaSource = MediaStoreDataSource(context.contentResolver, classifier)
     val mediaDeleter = MediaDeleter(context.contentResolver)

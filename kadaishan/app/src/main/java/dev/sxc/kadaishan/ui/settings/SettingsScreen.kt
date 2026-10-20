@@ -1,6 +1,8 @@
 package dev.sxc.kadaishan.ui.settings
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,25 +12,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,16 +40,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.sxc.kadaishan.data.SettingsRepository
+import dev.sxc.kadaishan.ui.kit.AlertAction
 import dev.sxc.kadaishan.ui.kit.Daylight
+import dev.sxc.kadaishan.ui.kit.DaylightAlert
 import dev.sxc.kadaishan.ui.kit.GroupCard
 import dev.sxc.kadaishan.ui.kit.NavTitleBar
 import dev.sxc.kadaishan.ui.kit.SectionLabel
 import dev.sxc.kadaishan.ui.kit.daylightBackground
+import dev.sxc.kadaishan.ui.kit.daylightRowClickable
 import dev.sxc.kadaishan.ui.kit.rememberHaptics
 import dev.sxc.kadaishan.model.Board
 import dev.sxc.kadaishan.model.BoardAction
@@ -104,7 +111,7 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 48.dp)
-                        .clickable {
+                        .daylightRowClickable {
                             // 点按 = 与当前持有目标动作的另一手势交换。
                             // 循环 next 直接覆盖会撞双射校验（必抛 IAE）；交换保持双射，正常交互不再触发红字。
                             val next = actionOrder[(actionOrder.indexOf(action) + 1) % actionOrder.size]
@@ -220,6 +227,8 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit) {
                         haptics.tap()
                         scope.launch { repo.setPermanentDeleteUnlocked(on) }
                     },
+                    // iOS UISwitch 语汇：拇子纯白无图标（M3 默认内嵌对勾需显式去除）
+                    thumbContent = {},
                     colors = SwitchDefaults.colors(
                         checkedTrackColor = Daylight.primary,
                         checkedThumbColor = Daylight.onPrimary,
@@ -236,11 +245,14 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit) {
 
 /** 每轮数量行：板块名 + 滑条（拖动走本地态，松手一次性落盘——异步持久化不回弹、不丢末次写）+
  *  数值键（Action Blue 文字型可点信号，点开精输弹窗）。 */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class) // Slider thumb 槽（iOS 圆形拇自绘）
 @Composable
 private fun RoundSizeRow(board: Board, size: Int, onCommit: (Int) -> Unit) {
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(0f) }
     var editOpen by remember { mutableStateOf(false) }
+    val thumbFill = Daylight.canvas
+    val thumbStroke = Daylight.hairline
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -266,6 +278,13 @@ private fun RoundSizeRow(board: Board, size: Int, onCommit: (Int) -> Unit) {
             },
             valueRange = 1f..300f,
             colors = daylightSliderColors(),
+            // iOS UISlider 语汇：圆形白拇 + hairline 描边（M3 默认竖条拇 + 按压圆晕需替换）
+            thumb = {
+                Canvas(modifier = Modifier.size(28.dp)) {
+                    drawCircle(color = thumbFill)
+                    drawCircle(color = thumbStroke, style = Stroke(width = 1.dp.toPx()))
+                }
+            },
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
         )
         Text(
@@ -275,7 +294,10 @@ private fun RoundSizeRow(board: Board, size: Int, onCommit: (Int) -> Unit) {
             textAlign = TextAlign.End,
             modifier = Modifier
                 .width(48.dp)
-                .clickable { editOpen = true },
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { editOpen = true },
         )
     }
     if (editOpen) {
@@ -291,60 +313,51 @@ private fun RoundSizeRow(board: Board, size: Int, onCommit: (Int) -> Unit) {
     }
 }
 
-/** 数值精输弹窗：数字键盘、仅数字 3 位、1~300 校验（越界/空 = 确定禁用 + 红提示）。 */
+/** 数值精输弹窗（iOS 居中 alert）：数字键盘、仅数字 3 位、1~300 校验（越界/空 = 确定禁用 + 红提示）；
+ *  输入框 = parchment 填充底 + radiusSm 无描边（iOS 填充式语汇，替代 M3 描边输入框）。 */
 @Composable
 private fun RoundSizeDialog(board: Board, initial: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf(initial.toString()) }
     val parsed = text.trim().toIntOrNull()
     val valid = parsed != null && parsed in 1..300
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Daylight.canvas,
-        title = {
-            Text(
-                text = "${boardLabel(board)} · 每轮数量",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = Daylight.ink,
+    DaylightAlert(
+        onDismiss = onDismiss,
+        title = "${boardLabel(board)} · 每轮数量",
+        actions = listOf(
+            AlertAction(text = "取消", onClick = onDismiss),
+            AlertAction(
+                text = "确定",
+                weight = FontWeight.SemiBold,
+                enabled = valid,
+                onClick = { parsed?.let(onConfirm) },
+            ),
+        ),
+        content = {
+            TextField(
+                value = text,
+                onValueChange = { v -> text = v.filter { it.isDigit() }.take(3) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                isError = text.isNotEmpty() && !valid,
+                shape = RoundedCornerShape(Daylight.radiusSm),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Daylight.parchment,
+                    unfocusedContainerColor = Daylight.parchment,
+                    errorContainerColor = Daylight.parchment,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    errorIndicatorColor = Color.Transparent,
+                    cursorColor = Daylight.primary,
+                    errorCursorColor = Daylight.danger,
+                ),
+                modifier = Modifier.fillMaxWidth(),
             )
-        },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { v -> text = v.filter { it.isDigit() }.take(3) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    isError = text.isNotEmpty() && !valid,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Daylight.primary,
-                        unfocusedBorderColor = Daylight.hairline,
-                        focusedLabelColor = Daylight.primary,
-                        cursorColor = Daylight.primary,
-                        errorBorderColor = Daylight.danger,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    text = if (valid) "范围 1~300 · 改动立即生效" else "请输入 1~300 之间的整数",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (valid) Daylight.inkSub else Daylight.danger,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { parsed?.let(onConfirm) }, enabled = valid) {
-                Text(
-                    text = "确定",
-                    color = if (valid) Daylight.primary else Daylight.inkSub,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = "取消", color = Daylight.primary)
-            }
+            Text(
+                text = if (valid) "范围 1~300 · 改动立即生效" else "请输入 1~300 之间的整数",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (valid) Daylight.inkSub else Daylight.danger,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         },
     )
 }
@@ -365,14 +378,14 @@ private fun daylightSliderColors() = SliderDefaults.colors(
     inactiveTrackColor = Daylight.hairline,
 )
 
-/** 单选行（iOS 设置语汇）：左侧标签 + 选中时右侧 Action Blue 对勾。 */
+/** 单选行（iOS 设置语汇）：左侧标签 + 选中时右侧 Action Blue 对勾；按压整行高亮、无水波纹。 */
 @Composable
 private fun CheckRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
-            .clickable(onClick = onClick)
+            .daylightRowClickable(onClick = onClick)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

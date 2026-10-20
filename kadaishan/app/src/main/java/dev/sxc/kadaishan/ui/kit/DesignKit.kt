@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +64,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -97,6 +100,12 @@ object Daylight {
     val onDark = Color(0xFFFFFFFF)          // 深色面前景
     val bodyMuted = Color(0xFFCCCCCC)       // 深色面弱化正文
     val danger = Color(0xFFD70015)          // 危险 / 错误语义色（error 唯一来源）
+
+    /** 媒体面半透遮罩唯一档（黑 @50%）：暂停指示 / 已标记牌 / 提示牌 / 时间胶囊 / 深色 Snackbar 同取此值。 */
+    val mediaScrim = surfaceBlack.copy(alpha = 0.5f)
+
+    /** 禁用态透明度唯一档（替代散落的 0.35/0.38 等独值）。 */
+    val disabledAlpha = 0.5f
 
     // —— M3 colorScheme 专用（唯一定义点；AppTheme 只引用不写 hex）——
     val secondary = Color(0xFF5F5F63)
@@ -230,6 +239,7 @@ fun PillButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale = rememberPressScale(pressed)
+    val haptics = rememberHaptics()
     Box(
         modifier = modifier
             .graphicsLayer {
@@ -242,7 +252,7 @@ fun PillButton(
                 interactionSource = interaction,
                 indication = null,
                 enabled = enabled,
-                onClick = onClick,
+                onClick = { haptics.tap(); onClick() },
             )
             .minTouch()
             .padding(horizontal = 22.dp, vertical = 11.dp),
@@ -277,6 +287,7 @@ fun OnDarkButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale = rememberPressScale(pressed)
+    val haptics = rememberHaptics()
     Box(
         modifier = modifier
             .graphicsLayer {
@@ -289,7 +300,7 @@ fun OnDarkButton(
                 interactionSource = interaction,
                 indication = null,
                 enabled = enabled,
-                onClick = onClick,
+                onClick = { haptics.tap(); onClick() },
             )
             .minTouch()
             .padding(horizontal = 22.dp, vertical = 11.dp),
@@ -317,6 +328,7 @@ fun PearlButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale = rememberPressScale(pressed)
+    val haptics = rememberHaptics()
     Box(
         modifier = modifier
             .graphicsLayer {
@@ -330,7 +342,7 @@ fun PearlButton(
                 interactionSource = interaction,
                 indication = null,
                 enabled = enabled,
-                onClick = onClick,
+                onClick = { haptics.tap(); onClick() },
             )
             .minTouch()
             .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -342,6 +354,166 @@ fun PearlButton(
             fontSize = 14.sp,
             letterSpacing = (-0.016).em,
         )
+    }
+}
+
+/**
+ * 文字键（Daylight 语汇，替代 M3 TextButton）：蓝字透明底、无水波纹、按压渐隐 50%、
+ * 48dp 触达、内置 tap 触觉回执。禁用时落弱墨 50%。
+ */
+@Composable
+fun TextActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    color: Color = Daylight.primary,
+    fontSize: TextUnit = 14.sp,
+    fontWeight: FontWeight = FontWeight.Normal,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val haptics = rememberHaptics()
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(RoundedCornerShape(Daylight.radiusSm))
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = { haptics.tap(); onClick() },
+            )
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Text(
+            text = text,
+            color = if (enabled) color else Daylight.inkSub.copy(alpha = Daylight.disabledAlpha),
+            fontSize = fontSize,
+            fontWeight = fontWeight,
+            letterSpacing = (-0.016).em,
+            modifier = Modifier.graphicsLayer { alpha = if (pressed) 0.5f else 1f },
+        )
+    }
+}
+
+/**
+ * 列表行可点（iOS 语汇）：无水波纹；按压整行叠加 6% 墨（iOS 列表行高亮）。
+ * 背景在 clickable 之前上链——调用方后续 padding 内的区域也有按压反馈。
+ */
+@Composable
+fun Modifier.daylightRowClickable(enabled: Boolean = true, onClick: () -> Unit): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    return this
+        .background(if (pressed) Daylight.ink.copy(alpha = 0.06f) else Color.Transparent)
+        .clickable(
+            interactionSource = interaction,
+            indication = null,
+            enabled = enabled,
+            onClick = onClick,
+        )
+}
+
+/** [DaylightAlert] 按钮槽动作：默认蓝字 400；确认/破坏语义用 weight = SemiBold + color 显式给。 */
+class AlertAction(
+    val text: String,
+    val onClick: () -> Unit,
+    val color: Color = Daylight.primary,
+    val weight: FontWeight = FontWeight.Normal,
+    val enabled: Boolean = true,
+)
+
+/**
+ * iOS 居中弹窗（替代 M3 AlertDialog）：radiusLg 白卡、标题居中 17sp/600、说明 13sp 弱墨居中、
+ * 按钮区 1px hairline 通栏分隔、按钮整行可点（1~2 枚，双钮左右均分 + 竖 hairline）；
+ * 按压渐隐、内置 tap 回执。content 槽放自定义内容（如输入框），位于说明与按钮区之间。
+ */
+@Composable
+fun DaylightAlert(
+    onDismiss: () -> Unit,
+    title: String,
+    actions: List<AlertAction>,
+    message: String? = null,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 312.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(Daylight.radiusLg))
+                .background(Daylight.canvas),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(modifier = Modifier.height(20.dp))
+                androidx.compose.material3.Text(
+                    text = title,
+                    color = Daylight.ink,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = (-0.011).em,
+                    textAlign = TextAlign.Center,
+                )
+                if (message != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    androidx.compose.material3.Text(
+                        text = message,
+                        color = Daylight.inkSub,
+                        fontSize = 13.sp,
+                        letterSpacing = (-0.01).em,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                if (content != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    content()
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+            HorizontalDivider(color = Daylight.hairline, thickness = 1.dp)
+            Row(modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                actions.take(2).forEachIndexed { index, action ->
+                    if (index > 0) {
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(Daylight.hairline),
+                        )
+                    }
+                    val interaction = remember { MutableInteractionSource() }
+                    val pressed by interaction.collectIsPressedAsState()
+                    val haptics = rememberHaptics()
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(if (pressed) Daylight.ink.copy(alpha = 0.06f) else Color.Transparent)
+                            .clickable(
+                                interactionSource = interaction,
+                                indication = null,
+                                enabled = action.enabled,
+                                onClick = { haptics.tap(); action.onClick() },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = action.text,
+                            color = if (action.enabled) action.color else Daylight.inkSub.copy(alpha = Daylight.disabledAlpha),
+                            fontSize = 17.sp,
+                            fontWeight = action.weight,
+                            letterSpacing = (-0.011).em,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

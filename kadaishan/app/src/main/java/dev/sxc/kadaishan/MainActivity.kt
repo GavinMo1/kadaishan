@@ -15,16 +15,20 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,16 +39,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -58,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -71,21 +75,17 @@ import dev.sxc.kadaishan.ui.AppTheme
 import dev.sxc.kadaishan.ui.boards.PhotoCardScreen
 import dev.sxc.kadaishan.ui.boards.VideoCardScreen
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.HorizontalDivider
 import dev.sxc.kadaishan.ui.kit.Daylight
-import dev.sxc.kadaishan.ui.kit.PearlButton
 import dev.sxc.kadaishan.ui.kit.SegTabs
-import dev.sxc.kadaishan.ui.kit.daylightBackground
-import dev.sxc.kadaishan.ui.kit.hairlineBorder
+import dev.sxc.kadaishan.ui.kit.TextActionButton
+import dev.sxc.kadaishan.ui.kit.rememberHaptics
+import dev.sxc.kadaishan.ui.kit.rememberReducedMotion
 import dev.sxc.kadaishan.ui.settle.PanelStage
 import dev.sxc.kadaishan.ui.settle.SettlementPanel
 import dev.sxc.kadaishan.ui.settings.SettingsScreen
 import dev.sxc.kadaishan.ui.trash.TrashScreen
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.unit.sp
 import dev.sxc.kadaishan.ui.kit.PillButton
 import kotlinx.coroutines.launch
 
@@ -97,6 +97,11 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.WHITE, android.graphics.Color.WHITE),
         )
         super.onCreate(savedInstanceState)
+        dev.sxc.kadaishan.data.ReviewDiagnostics.initialize(applicationContext)
+        val installed = packageManager.getPackageInfo(packageName, 0)
+        dev.sxc.kadaishan.data.ReviewDiagnostics.record(
+            "installed version=${installed.versionName} code=${installed.longVersionCode} updated=${installed.lastUpdateTime}"
+        )
         val container = AppContainer(applicationContext)
         setContent {
             AppTheme {
@@ -131,6 +136,12 @@ private fun Context.mediaScope(): VisibleScope {
 private tailrec fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
     is LifecycleOwner -> this
     is ContextWrapper -> baseContext.findLifecycleOwner()
+    else -> null
+}
+
+private tailrec fun Context.findActivity(): ComponentActivity? = when (this) {
+    is ComponentActivity -> this
+    is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
 
@@ -224,7 +235,10 @@ fun AppRoot(container: AppContainer) {
                         onNextRound = exitRestore,
                         onDismiss = exitRestore,
                         initialPhase = PanelStage.VERIFYING,
+                        initialSnapshot = pending.snapshot,
+                        initialMode = pending.mode,
                         onExitRound = exitRestore,
+                        onKeep = { container.reviewHistory.setKept(it, true) },
                     )
                 }
             }
@@ -232,20 +246,51 @@ fun AppRoot(container: AppContainer) {
     }
 }
 
-/** DENIED：全屏开版式引导（无容器卡）：主张句 + 权限说明 + 蓝色药丸 CTA。 */
+/** DENIED：全屏开版式引导：图形锚点（叠卡意象）+ 主张句 + 权限说明 + 蓝色药丸 CTA；spatial 入场。 */
 @Composable
 private fun DeniedGuide(onGrant: () -> Unit) {
+    val reduced = rememberReducedMotion()
+    val enter = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, if (reduced) snap() else Daylight.spatial()) }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 32.dp),
+            .padding(horizontal = 32.dp)
+            .graphicsLayer {
+                alpha = enter.value
+                translationY = (1f - enter.value) * 24.dp.toPx()
+            },
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // 图形锚点：parchment 圆底 + 叠放双卡（后卡浅灰、前卡 Action Blue）——相册整理意象，禁渐变禁阴影
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(Daylight.parchment),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .offset(x = 5.dp, y = (-5).dp)
+                    .size(24.dp, 30.dp)
+                    .clip(RoundedCornerShape(Daylight.radiusXs))
+                    .background(Daylight.checkRing),
+            )
+            Box(
+                modifier = Modifier
+                    .offset(x = (-5).dp, y = 5.dp)
+                    .size(24.dp, 30.dp)
+                    .clip(RoundedCornerShape(Daylight.radiusXs))
+                    .background(Daylight.primary),
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
         Text(
             text = "把相册留给真正想看的照片",
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center,
             color = Daylight.ink,
         )
@@ -279,91 +324,149 @@ private fun MainContent(
         if (imageBoardsMerged && board != Board.PHOTO && board != Board.VIDEO) boardName = Board.PHOTO.name
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // 内容全幅（查看器式）：子页/板块自管 insets——视频板黑色满屏沉浸，图片板白画布自留顶部余量。
-        // chrome 悬浮于内容之上，不占布局位：显隐不引起内容重排。
-        if (showTrash) {
-            BackHandler { showTrash = false }
-            TrashScreen(container.mediaDeleter, onBack = { showTrash = false })
-        } else if (showSettings) {
-            BackHandler { showSettings = false }
-            SettingsScreen(container.settings, onBack = { showSettings = false })
-        } else {
-            // 查看器式收纳：单击切换 chrome（图片板）；干活（手势/翻页）自动收起
-            var chromeVisible by rememberSaveable { mutableStateOf(true) }
-            val onToggleChrome: () -> Unit = { chromeVisible = !chromeVisible }
-            val onInteract: () -> Unit = { chromeVisible = false }
-            if (board == Board.VIDEO) {
-                VideoCardScreen(
-                    container.mediaSource,
-                    container.settings,
-                    container.exifReader,
-                    container.mediaDeleter,
-                    container.pendingSettlement,
-                    onToggleChrome = onToggleChrome,
-                    onInteract = onInteract,
-                )
+    // 系统栏随页面动态配色（P0-2）：视频板黑底沉浸 → 浅色图标；其余页面 → 深色图标
+    val activity = LocalContext.current.findActivity()
+    LaunchedEffect(board, showSettings, showTrash) {
+        val onVideoBoard = board == Board.VIDEO && !showSettings && !showTrash
+        activity?.enableEdgeToEdge(
+            statusBarStyle = if (onVideoBoard) {
+                SystemBarStyle.dark(android.graphics.Color.BLACK)
             } else {
-                PhotoCardScreen(
-                    board,
-                    container.mediaSource,
-                    container.settings,
-                    container.exifReader,
-                    container.mediaDeleter,
-                    container.pendingSettlement,
-                    onToggleChrome = onToggleChrome,
-                    onInteract = onInteract,
-                )
-            }
+                SystemBarStyle.light(android.graphics.Color.WHITE, android.graphics.Color.WHITE)
+            },
+            navigationBarStyle = if (onVideoBoard) {
+                SystemBarStyle.dark(android.graphics.Color.BLACK)
+            } else {
+                SystemBarStyle.light(android.graphics.Color.WHITE, android.graphics.Color.WHITE)
+            },
+        )
+    }
 
-            // 悬浮 chrome 层：PARTIAL 横幅常驻（PRD §5.4）+ 板块栏 + 收纳把手
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopCenter),
-            ) {
-                if (scope == VisibleScope.PARTIAL) {
-                    PartialBanner(
-                        onGrantAll = onGrantAll,
-                        modifier = Modifier.statusBarsPadding(),
+    val haptics = rememberHaptics()
+    val reducedMotion = rememberReducedMotion()
+    // 页面键：子页（设置/回收站）与板块页三分支；板块内切换不触发转场
+    val page = when {
+        showTrash -> "trash"
+        showSettings -> "settings"
+        else -> "board"
+    }
+
+    // iOS 推入式导航（P0-3）：子页自右滑入 + 底页左移 1/4 parallax，返回镜像；
+    // 系统侧滑返回手势触发 BackHandler → 同一弹出转场（与 iOS 左缘拖拽返回同路径）
+    AnimatedContent(
+        targetState = page,
+        transitionSpec = {
+            when {
+                reducedMotion -> fadeIn(snap()) togetherWith fadeOut(snap())
+                initialState == "board" && targetState != "board" ||
+                    initialState != "board" && targetState != "board" ->
+                    (slideInHorizontally(Daylight.drawer()) { it } + fadeIn(Daylight.settle())) togetherWith
+                        (slideOutHorizontally(Daylight.drawer()) { -it / 4 } + fadeOut(Daylight.settle()))
+                else ->
+                    (slideInHorizontally(Daylight.drawer()) { -it / 4 } + fadeIn(Daylight.settle())) togetherWith
+                        (slideOutHorizontally(Daylight.drawer()) { it } + fadeOut(Daylight.settle()))
+            }
+        },
+        label = "page-nav",
+    ) { target ->
+        when (target) {
+            "trash" -> {
+                BackHandler { showTrash = false }
+                TrashScreen(container.mediaDeleter, onBack = { showTrash = false })
+            }
+            "settings" -> {
+                BackHandler { showSettings = false }
+                SettingsScreen(container.settings, onBack = { showSettings = false })
+            }
+            else -> Box(modifier = Modifier.fillMaxSize()) {
+                // 内容全幅（查看器式）：子页/板块自管 insets——视频板黑色满屏沉浸，图片板白画布自留顶部余量。
+                // chrome 悬浮于内容之上，不占布局位：显隐不引起内容重排。
+                // 查看器式收纳：单击切换 chrome（图片板）；干活（手势/翻页）自动收起
+                var chromeVisible by rememberSaveable { mutableStateOf(true) }
+                val onToggleChrome: () -> Unit = { chromeVisible = !chromeVisible }
+                val onInteract: () -> Unit = { chromeVisible = false }
+                if (board == Board.VIDEO) {
+                    VideoCardScreen(
+                        container.mediaSource,
+                        container.settings,
+                        container.exifReader,
+                        container.mediaDeleter,
+                        container.pendingSettlement,
+                        container.reviewHistory,
+                        onOpenTrash = { showTrash = true },
+                        onToggleChrome = onToggleChrome,
+                        onInteract = onInteract,
+                    )
+                } else {
+                    PhotoCardScreen(
+                        board,
+                        container.mediaSource,
+                        container.settings,
+                        container.exifReader,
+                        container.mediaDeleter,
+                        container.pendingSettlement,
+                        container.reviewHistory,
+                        onOpenTrash = { showTrash = true },
+                        onToggleChrome = onToggleChrome,
+                        onInteract = onInteract,
                     )
                 }
-                AnimatedVisibility(
-                    visible = chromeVisible,
-                    enter = slideInVertically(Daylight.settle()) { -it } + fadeIn(Daylight.settle()),
-                    exit = slideOutVertically(Daylight.settle()) { -it } + fadeOut(Daylight.settle()),
+
+                // 悬浮 chrome 层：PARTIAL 横幅常驻（PRD §5.4）+ 板块栏 + 收纳把手
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter),
                 ) {
-                    FloatingBoardBar(
-                        board = board,
-                        tabs = boardTabs(imageBoardsMerged),
-                        onBoardChange = { boardName = it.name },
-                        onSettings = { showSettings = true },
-                        onTrash = { showTrash = true },
-                        modifier = Modifier.statusBarsPadding(),
-                    )
-                }
-                // 收纳把手：chrome 收起时才出现（半透圆片，图片白画布 / 视频黑底均可辨）；
-                // 视频板点按 = 暂停（PRD），把手是其唯一的 chrome 唤回通道
-                AnimatedVisibility(visible = !chromeVisible) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(top = 6.dp),
-                        contentAlignment = Alignment.TopCenter,
+                    if (scope == VisibleScope.PARTIAL) {
+                        PartialBanner(
+                            onGrantAll = onGrantAll,
+                            modifier = Modifier.statusBarsPadding(),
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = chromeVisible,
+                        enter = slideInVertically(Daylight.settle()) { -it } + fadeIn(Daylight.settle()),
+                        exit = slideOutVertically(Daylight.settle()) { -it } + fadeOut(Daylight.settle()),
                     ) {
+                        FloatingBoardBar(
+                            board = board,
+                            tabs = boardTabs(imageBoardsMerged),
+                            onBoardChange = {
+                                haptics.tick()
+                                boardName = it.name
+                            },
+                            onSettings = { showSettings = true },
+                            onTrash = { showTrash = true },
+                            modifier = Modifier.statusBarsPadding(),
+                        )
+                    }
+                    // 收纳把手：chrome 收起时才出现（半透圆片，图片白画布 / 视频黑底均可辨）；
+                    // 视频板点按 = 暂停（PRD），把手是其唯一的 chrome 唤回通道
+                    AnimatedVisibility(visible = !chromeVisible) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp, 48.dp)
-                                .clickable { chromeVisible = true },
-                            contentAlignment = Alignment.Center,
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .padding(top = 6.dp),
+                            contentAlignment = Alignment.TopCenter,
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(28.dp, 5.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .background(Daylight.chipTranslucent),
-                            )
+                                    .size(48.dp, 48.dp)
+                                    .clickable {
+                                        haptics.tick()
+                                        chromeVisible = true
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp, 5.dp)
+                                        .clip(RoundedCornerShape(Daylight.pillRadius))
+                                        .background(Daylight.chipTranslucent),
+                                )
+                            }
                         }
                     }
                 }
@@ -417,24 +520,10 @@ private fun FloatingBoardBar(
     }
 }
 
-/** 悬浮栏文字键：Action Blue 15sp、48dp 触达、透明底。 */
+/** 悬浮栏文字键：kit TextActionButton（Action Blue 14sp、48dp 触达、按压渐隐、内置 tap 回执）。 */
 @Composable
-private fun ChromeTextButton(text: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-            .clip(RoundedCornerShape(Daylight.radiusSm))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = Daylight.primary,
-            fontSize = 15.sp,
-            letterSpacing = (-0.016).em,
-        )
-    }
-}
+private fun ChromeTextButton(text: String, onClick: () -> Unit) =
+    TextActionButton(text = text, onClick = onClick)
 
 /** PARTIAL：顶部常驻横幅（PRD §5.4）：浅红容器药丸 + 行内改授动作，悬浮于内容之上。 */
 @Composable
@@ -455,8 +544,10 @@ private fun PartialBanner(onGrantAll: () -> Unit, modifier: Modifier = Modifier)
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
-        TextButton(onClick = onGrantAll) {
-            Text("改授全部", color = Daylight.primary, fontWeight = FontWeight.SemiBold)
-        }
+        TextActionButton(
+            text = "改授全部",
+            onClick = onGrantAll,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

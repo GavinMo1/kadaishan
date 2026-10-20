@@ -6,7 +6,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,11 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,16 +42,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import dev.sxc.kadaishan.data.MediaDeleter
+import dev.sxc.kadaishan.domain.settle.BatchFlow
+import dev.sxc.kadaishan.domain.settle.DegradeResult
 import dev.sxc.kadaishan.model.DeleteMode
+import dev.sxc.kadaishan.ui.kit.AlertAction
 import dev.sxc.kadaishan.ui.kit.CircleCheck
 import dev.sxc.kadaishan.ui.kit.DangerPillButton
 import dev.sxc.kadaishan.ui.kit.Daylight
+import dev.sxc.kadaishan.ui.kit.DaylightAlert
 import dev.sxc.kadaishan.ui.kit.GroupCard
 import dev.sxc.kadaishan.ui.kit.NavTitleBar
+import dev.sxc.kadaishan.ui.kit.PearlButton
 import dev.sxc.kadaishan.ui.kit.PillButton
 import dev.sxc.kadaishan.ui.kit.Spinner
+import dev.sxc.kadaishan.ui.kit.TextActionButton
 import dev.sxc.kadaishan.ui.kit.daylightBackground
-import dev.sxc.kadaishan.model.SnapItem
+import dev.sxc.kadaishan.ui.kit.daylightRowClickable
+import dev.sxc.kadaishan.ui.kit.rememberHaptics
 import dev.sxc.kadaishan.model.TrashEntry
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -76,20 +80,19 @@ fun TrashScreen(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
     var entries by remember { mutableStateOf<List<TrashEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var chosen by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    // 批次状态（找回/清空共用骨架：批次 + outgoing + launcher 推进，结果由回查裁决）。
-    // M1：批次流水线关键态 rememberSaveable（重建不重复发批）；batches/outgoing 不落盘，
-    // 重建后由守卫直接 finishFlow（回查既成事实），禁止重发系统弹窗。
+    // 批次状态（找回/清空共用骨架：批次推进 = BatchFlow 单一纯状态机，结果由回查裁决）。
+    // M1：launchedIds/outgoingIds/working 等流水线关键态 rememberSaveable（重建不重复发批）；
+    // flow 刻意 remember 不落盘——重建后由守卫直接 finishFlow（回查既成事实），禁止重发系统弹窗。
     val longListSaver = listSaver<List<Long>, Long>(save = { it }, restore = { it })
-    var batches by remember { mutableStateOf<List<List<SnapItem>>>(emptyList()) }
-    var batchIndex by rememberSaveable { mutableStateOf(0) }
+    var flow by remember { mutableStateOf<BatchFlow?>(null) }
     var outgoing by remember { mutableStateOf<IntentSender?>(null) }
     var outgoingIds by rememberSaveable(stateSaver = longListSaver) { mutableStateOf(emptyList()) }
     var launchedIds by rememberSaveable(stateSaver = longListSaver) { mutableStateOf(emptyList()) }
-    var failedCount by rememberSaveable { mutableStateOf(0) }
     var working by rememberSaveable { mutableStateOf(false) }
     var permFlow by rememberSaveable { mutableStateOf(false) }
     var clearConfirm by remember { mutableStateOf(false) }
@@ -118,6 +121,8 @@ fun TrashScreen(
 
     fun finishFlow() {
         scope.launch {
+            // flow 可能已随重建丢失（守卫路径）：失败计数按 0 兜底，结论仍以回查为唯一判据
+            val failed = flow?.failedCount ?: 0
             if (permFlow) {
                 // 三态（PRD v1.6 / 架构 §7 口径）：行缺失 = 已永久删除；行仍在 = 未执行；回查失败 = 结果未知
                 val rows = try {
@@ -126,12 +131,12 @@ fun TrashScreen(
                     null
                 }
                 val (deleted, unexecuted, unknown) = if (rows == null) {
-                    Triple(0, failedCount, launchedIds.size)
+                    Triple(0, failed, launchedIds.size)
                 } else {
                     val present = rows.map { it.id }.toSet()
                     Triple(
                         launchedIds.count { it !in present },
-                        failedCount + launchedIds.count { it in present },
+                        failed + launchedIds.count { it in present },
                         0,
                     )
                 }
@@ -151,19 +156,17 @@ fun TrashScreen(
                 messageAlert = restored < requested
             }
             working = false
-            batches = emptyList()
-            batchIndex = 0
+            flow = null
             launchedIds = emptyList()
             outgoingIds = emptyList()
-            failedCount = 0
             permFlow = false
             refresh()
         }
     }
 
-    // M1 守卫：重建后 working 残留但批次已丢 → 直接回查收尾（回查既成事实，不重复发批）
-    LaunchedEffect(working) {
-        if (working && batches.isEmpty()) {
+    // M1 守卫：重建后 working 残留但 flow 已丢 → 直接回查收尾（回查既成事实，不重复发批）
+    LaunchedEffect(working, flow) {
+        if (working && flow == null) {
             if (launchedIds.isNotEmpty()) finishFlow() else {
                 working = false
                 permFlow = false
@@ -171,26 +174,10 @@ fun TrashScreen(
         }
     }
 
-    // M13 失败批降档（PRD §5.2：逐档减半、下限 5、每档只重试 1 次）：把失败批重切为更小子批留在原位，
-    // 调用方随后重入 launchCurrentBatch 重发；拆无可拆 = 计失败跳下一批。子批尺寸严格递减，必终止。
-    val degradeBatch: (List<SnapItem>) -> Unit = { failed ->
-        val subs = deleter.fallbackSubBatches(failed)
-        if (subs.isEmpty()) {
-            failedCount += failed.size
-            outgoingIds = emptyList()
-            batchIndex++
-        } else {
-            batches = batches.toMutableList().apply {
-                removeAt(batchIndex)
-                addAll(batchIndex, subs)
-            }
-        }
-    }
-
     fun launchCurrentBatch() {
         scope.launch {
-            val batch = batches.getOrNull(batchIndex)
-            if (batch == null) {
+            val f = flow
+            val batch = f?.current() ?: run {
                 finishFlow()
                 return@launch
             }
@@ -201,9 +188,9 @@ fun TrashScreen(
                 batch.map { it.id }.toSet()
             }
             val effective = batch.filter { it.id in alive }
-            failedCount += batch.size - effective.size
+            f.countFailed(batch.size - effective.size)
             if (effective.isEmpty()) {
-                batchIndex++
+                f.advance()
                 launchCurrentBatch()
                 return@launch
             }
@@ -216,8 +203,13 @@ fun TrashScreen(
                 }
             } catch (_: Exception) {
                 // M13：构建期整批拒绝（失效 URI / TLT）→ 降档切批重发；拆无可拆才计失败，不崩
-                degradeBatch(effective)
-                launchCurrentBatch()
+                when (val result = f.degradeCurrent()) {
+                    is DegradeResult.Retrying -> launchCurrentBatch()
+                    is DegradeResult.Skipped -> {
+                        f.countFailed(result.batch.size)
+                        launchCurrentBatch()
+                    }
+                }
             }
         }
     }
@@ -230,12 +222,12 @@ fun TrashScreen(
             launchedIds = launchedIds + outgoingIds
         } else {
             // 拒绝：本批及后续批不再发起（拒绝后重试只会连续弹窗），全部计入提示
-            failedCount += outgoingIds.size + batches.drop(batchIndex + 1).sumOf { it.size }
+            flow?.abortRest(outgoingIds.size)
             finishFlow()
             return@rememberLauncherForActivityResult
         }
         outgoingIds = emptyList()
-        batchIndex++
+        flow?.advance()
         launchCurrentBatch()
     }
     LaunchedEffect(outgoing) {
@@ -246,8 +238,14 @@ fun TrashScreen(
                 // M13：launch 抛 TransactionTooLarge 等 → 降档重发，不崩
                 outgoing = null
                 outgoingIds = emptyList()
-                degradeBatch(batches.getOrNull(batchIndex).orEmpty())
-                launchCurrentBatch()
+                when (val result = flow?.degradeCurrent()) {
+                    is DegradeResult.Retrying -> launchCurrentBatch()
+                    is DegradeResult.Skipped -> {
+                        flow?.countFailed(result.batch.size)
+                        launchCurrentBatch()
+                    }
+                    null -> finishFlow() // 无流程（重建边缘）→ 回查既成事实
+                }
             }
         }
     }
@@ -279,16 +277,30 @@ fun TrashScreen(
                 )
             }
         } else {
-            loadError?.let { Text(it, color = Daylight.danger) }
+            // 错误态：居中 + 重试出口（不留无路可走的红字贴边）
+            loadError?.let { err ->
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        err,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Daylight.danger,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    PearlButton(text = "重试", onClick = { refresh() })
+                }
+            }
             if (entries.isEmpty()) {
                 if (loadError == null) {
                     Column(
-                        modifier = Modifier.fillMaxWidth().padding(top = 64.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
                             "回收站为空",
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleLarge,
                             color = Daylight.ink,
                         )
                         Spacer(Modifier.height(6.dp))
@@ -310,14 +322,16 @@ fun TrashScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = Daylight.inkSub,
                     )
-                    TextButton(
+                    TextActionButton(
+                        text = "全选",
                         enabled = !working,
                         onClick = { chosen = entries.map { it.item.id }.toSet() },
-                    ) { Text("全选", color = Daylight.primary) }
-                    TextButton(
+                    )
+                    TextActionButton(
+                        text = "全不选",
                         enabled = !working && chosen.isNotEmpty(),
                         onClick = { chosen = emptySet() },
-                    ) { Text("全不选", color = Daylight.primary) }
+                    )
                 }
                 Spacer(Modifier.height(4.dp))
                 GroupCard(modifier = Modifier.weight(1f)) {
@@ -329,14 +343,16 @@ fun TrashScreen(
                                 HorizontalDivider(
                                     color = Daylight.dividerSoft,
                                     thickness = 1.dp,
-                                    modifier = Modifier.padding(start = 92.dp),
+                                    // iOS 列表分隔线对齐文本起点：14(行距)+24(勾圈)+12+52(缩略图)+12 = 114
+                                    modifier = Modifier.padding(start = 114.dp),
                                 )
                             }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .defaultMinSize(minHeight = 60.dp)
-                                    .clickable(enabled = !working) {
+                                    .daylightRowClickable(enabled = !working) {
+                                        haptics.tap()
                                         chosen = if (checked) chosen - item.id else chosen + item.id
                                     }
                                     .padding(horizontal = 14.dp),
@@ -380,9 +396,9 @@ fun TrashScreen(
             }
             if (working) {
                 Text(
-                    "等待系统确认… 第 ${batchIndex + 1}/${batches.size} 批",
+                    "等待系统确认… 第 ${(flow?.index ?: 0) + 1}/${flow?.totalBatches ?: 0} 批",
                     modifier = Modifier.padding(top = 8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Daylight.inkSub,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -392,10 +408,8 @@ fun TrashScreen(
                 onClick = {
                     message = null
                     loadError = null
-                    batches = selected.map { it.item }.chunked(RESTORE_BATCH_CAP)
-                    batchIndex = 0
+                    flow = BatchFlow(selected.map { it.item }, RESTORE_BATCH_CAP)
                     launchedIds = emptyList()
-                    failedCount = 0
                     working = true
                     launchCurrentBatch()
                 },
@@ -413,40 +427,32 @@ fun TrashScreen(
         }
     }
 
-    // 清空回收站二次确认：红色警示 + N 项/容量/不可恢复口径，与勾选态无关
+    // 清空回收站二次确认（iOS 居中 alert）：红色警示 + N 项/容量/不可恢复口径，与勾选态无关
     if (clearConfirm) {
-        AlertDialog(
-            onDismissRequest = { clearConfirm = false },
-            containerColor = Daylight.canvas,
-            titleContentColor = Daylight.danger,
-            textContentColor = Daylight.ink,
-            title = { Text("清空回收站", fontWeight = FontWeight.SemiBold) },
-            text = {
-                Text(
-                    "永久删除 ${entries.size} 项 · ${formatSize(entries.sumOf { it.item.sizeBytes })} · 不可恢复" +
-                        "（含其他应用移入回收站的项）",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearConfirm = false
-                    message = null
-                    loadError = null
-                    permFlow = true
-                    batches = entries.map { it.item }.chunked(RESTORE_BATCH_CAP)
-                    batchIndex = 0
-                    launchedIds = emptyList()
-                    outgoingIds = emptyList()
-                    failedCount = 0
-                    working = true
-                    launchCurrentBatch()
-                }) {
-                    Text("永久删除 ${entries.size} 项", color = Daylight.danger, fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { clearConfirm = false }) { Text("取消", color = Daylight.ink) }
-            },
+        DaylightAlert(
+            onDismiss = { clearConfirm = false },
+            title = "清空回收站",
+            message = "永久删除 ${entries.size} 项 · ${formatSize(entries.sumOf { it.item.sizeBytes })} · 不可恢复" +
+                "（含其他应用移入回收站的项）",
+            actions = listOf(
+                AlertAction(text = "取消", onClick = { clearConfirm = false }),
+                AlertAction(
+                    text = "永久删除",
+                    color = Daylight.danger,
+                    weight = FontWeight.SemiBold,
+                    onClick = {
+                        clearConfirm = false
+                        message = null
+                        loadError = null
+                        permFlow = true
+                        flow = BatchFlow(entries.map { it.item }, RESTORE_BATCH_CAP)
+                        launchedIds = emptyList()
+                        outgoingIds = emptyList()
+                        working = true
+                        launchCurrentBatch()
+                    },
+                ),
+            ),
         )
     }
 }

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.view.TextureView
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -17,19 +18,15 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import dev.sxc.kadaishan.data.SettingsRepository
 import dev.sxc.kadaishan.domain.MediaSource
-import dev.sxc.kadaishan.domain.session.BoardSession
-import dev.sxc.kadaishan.domain.sort.fisherYates
+import dev.sxc.kadaishan.domain.session.RoundAdvance
+import dev.sxc.kadaishan.domain.session.SessionController
 import dev.sxc.kadaishan.model.Board
 import dev.sxc.kadaishan.model.MediaItem
 import dev.sxc.kadaishan.model.MediaKey
-import dev.sxc.kadaishan.model.MediaQuery
-import dev.sxc.kadaishan.model.SortSpec
-import dev.sxc.kadaishan.model.VisibleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 // ═══ 视频板状态持有者（PRD §4.2 抖音式删视频；架构 §2 状态归属表：视频 Snackbar/计数 = 本类）═══
 //
@@ -48,6 +45,7 @@ class VideoCardViewModel(
     private val source: MediaSource,
     private val settings: SettingsRepository,
     context: Context, // 仅取 applicationContext（防 Activity 泄漏）
+    private val history: dev.sxc.kadaishan.domain.session.ReviewHistory,
 ) : ViewModel() {
 
     /** 自动跳后 Snackbar 事件（seq 保证同值可重复触发；撤回 = unmark(id)）。 */
@@ -55,6 +53,25 @@ class VideoCardViewModel(
 
     // —— 对外可观察状态 ——
     /** 会话已构建（false = 首次/重建取数中 → UI 显示加载）。 */
+    private val durableAction = dev.sxc.kadaishan.domain.session.DurableReviewAction()
+    var actionError by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissActionError() { actionError = null }
+
+    private fun persistThen(commit: suspend () -> Unit, apply: () -> Unit) {
+        if (!ready || !durableAction.begin()) return
+        viewModelScope.launch {
+            try {
+                durableAction.complete(commit, apply)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionError = "保留记录未能保存，请重试"
+            }
+        }
+    }
+
     var ready by mutableStateOf(false)
         private set
 
@@ -66,9 +83,9 @@ class VideoCardViewModel(
     var viewIndex by mutableStateOf(0)
         private set
 
-    /** id → 详情（加载完成后才可渲染海报/信息卡）。数据按 id 稳定，跨重建保留。 */
-    var items by mutableStateOf<Map<MediaKey, MediaItem>>(emptyMap())
-        private set
+    /** id → 详情（加载完成后才可渲染海报/信息卡）。数据按 id 稳定，跨重建保留。
+     *  mutableStateMapOf：写入 O(1)（历史实现每次插入全量复制 Map）。 */
+    val items = mutableStateMapOf<MediaKey, MediaItem>()
 
     /** = session.markedIds 快照（每次会话动作后同步）。 */
     var markedIds by mutableStateOf<Set<MediaKey>>(emptySet())
@@ -115,8 +132,12 @@ class VideoCardViewModel(
     val currentId: MediaKey?
         get() = visitedIds.getOrNull(viewIndex)
 
-    private var session: BoardSession? = null
-    private var sort: SortSpec = SortSpec.Random
+    /** 海报解码预热口（Screen 侧）：未来 count 项中已加载行的 uri（与图片板同口径）。 */
+    fun upcomingUris(count: Int) =
+        session?.peekUpcoming(count + 1)?.mapNotNull { items[it]?.uri }.orEmpty()
+
+    private val controller = SessionController(source, Board.VIDEO, MediaStore.MATCH_EXCLUDE, history = history, diagnostic = dev.sxc.kadaishan.data.ReviewDiagnostics::record)
+    private val session get() = controller.session
 
     // —— 播放（PRD §4.2；单 ExoPlayer 实例，onCleared 释放）——
     private val appContext = context.applicationContext
@@ -134,7 +155,7 @@ class VideoCardViewModel(
         viewModelScope.launch {
             // 先取落盘配置再建会话（每轮数量 / 排序）。
             // 排序变更 = 下一轮生效（startNextRound 轮界重读对比，轮内不 rebuild、不清标记）。
-            sort = settings.sortStrategy.first()
+            controller.applySettings(settings.sortStrategy.first(), newMerged = true) // VIDEO 板无合并概念，仅占位
             applyRoundSize(settings.perBoardRoundSize.first()[Board.VIDEO] ?: SettingsRepository.defaultRoundSize(Board.VIDEO))
             rebuild()
         }
@@ -144,16 +165,34 @@ class VideoCardViewModel(
                 applyRoundSize(map[Board.VIDEO] ?: SettingsRepository.defaultRoundSize(Board.VIDEO))
             }
         }
-        // 详情加载 + 装片播放：失效/坏文件/被外部删除 → 自动前进不崩溃
+        // 详情加载 + 装片播放：失效/坏文件/被外部删除 → 自动前进不崩溃；行预取未来 5 项合并一次查询
         viewModelScope.launch {
-            snapshotFlow { currentId }.collect { id -> prepareCard(id) }
+            snapshotFlow { currentId }.collect { id ->
+                prepareCard(id)
+                prefetchUpcoming()
+            }
         }
     }
 
-    /** 每轮数量唯一同步口：VM 快照与会话 roundSize 一起改（幂等；init 前 session 为 null 只改快照）。 */
+    /** 每轮数量唯一同步口：VM 快照与会话 roundSize 一起改（幂等；init 前 session 为 null 只改快照）。
+     *  currentId 由回看栈 viewIndex 派生、不随 session 自翻 —— 热调后必须手工对齐导航位：
+     *  · 缩到已消耗值以内（轮末）：停在最新卡时推 past-end，结算触发条件（roundEnded && currentId==null）
+     *    才成立；回看中（viewIndex < lastIndex）不打断，前进到 frontier 由 fetchNext 自然落 past-end；
+     *  · 轮末再放大（复活）：正处 past-end 时拉回 frontier 取新卡（fetchNext 内含 sync，直接返回）。 */
     private fun applyRoundSize(size: Int) {
         currentRoundSize = size
-        session?.updateRoundSize(size)
+        val s = session
+        if (s != null) {
+            s.updateRoundSize(size)
+            when {
+                s.roundEnded() && viewIndex >= visitedIds.lastIndex ->
+                    viewIndex = visitedIds.size
+                !s.roundEnded() && viewIndex == visitedIds.size && visitedIds.isNotEmpty() -> {
+                    fetchNext()
+                    return
+                }
+            }
+        }
         sync()
     }
 
@@ -209,7 +248,7 @@ class VideoCardViewModel(
             override fun onPlayerError(error: PlaybackException) {
                 preparedUri = null // 失效源强制下次重装；坏文件 → 既有 load-failure 自动前进
                 if (visible && currentId != null && player?.playbackState == Player.STATE_IDLE) {
-                    next()
+                    if (!durableAction.busy) nextStep()
                 }
             }
 
@@ -271,12 +310,14 @@ class VideoCardViewModel(
 
     /** 上滑 / 右滑（保留）= 下一个。 */
     fun next() {
-        nextStep()
+        if (!ready || durableAction.busy) return
+        val id = currentId ?: return
+        persistThen({ if (id !in markedIds) history.setKept(setOf(id), true) }) { nextStep() }
     }
 
     /** 下滑 = 上一个（到头无效；回看不碰 session）。 */
     fun prev() {
-        if (viewIndex > 0) viewIndex--
+        if (!durableAction.busy && viewIndex > 0) viewIndex--
     }
 
     /** 前进主体（上滑 / 右滑 / 左滑标记共用）。 */
@@ -309,20 +350,22 @@ class VideoCardViewModel(
      *  可见卡必在已展示窗口内（fetchNext 时已消耗）→ session.mark 走回看分支：纯状态标记，指针/轮计数不动。 */
     fun markCurrentAndAdvance() {
         val s = session ?: return
-        if (!ready) return // 重建取数中：旧会话不可再动作
+        if (!ready || durableAction.busy) return // 重建取数中：旧会话不可再动作
         val id = currentId ?: return
-        if (id in s.markedIds) {
-            s.unmark(id)
-            sync()
-        } else {
-            s.mark(id)
-            if (id in s.markedIds) { // 会话拒绝（轮末等）→ 不前进之外无副作用
-                sync()
-                snack = SnackEvent(++snackSeq, markedCount, id)
+        val keeping = id in s.markedIds
+        persistThen({ history.setKept(setOf(id), keeping) }) {
+            if (keeping) {
+                s.unmark(id)
+            } else {
+                s.mark(id)
+                if (id in s.markedIds) {
+                    sync()
+                    snack = SnackEvent(++snackSeq, markedCount, id)
+                }
             }
+            nextStep()
+            sync()
         }
-        nextStep()
-        sync()
     }
 
     fun ackSnack(seq: Int) {
@@ -332,21 +375,25 @@ class VideoCardViewModel(
     /** Snackbar「撤回」动作（PRD §4.2：撤回 = unmark 该 id，停留当前卡）。 */
     fun undoSnack(id: MediaKey) {
         val s = session ?: return
-        if (s.unmark(id)) sync()
+        if (id !in s.markedIds) return
+        persistThen({ history.setKept(setOf(id), true) }) {
+            s.unmark(id)
+            sync()
+        }
     }
 
     // —— 轮次（PRD §4.4）——
 
-    /** 轮末态「开始下一轮」：同会话 startNewRound（PRD §4.4 跳过项会话级出池、随机序不重洗，不重建
-     *  BoardSession）；排序变更在此轮界生效（每轮数量已热生效，不参与重建判定）。池尽未满轮 → 重扫池子开新轮。 */
+    /** 轮末态「开始下一轮」：轮界决策（同会话开新轮 / 重建）= SessionController.decideNextRound 单一来源
+     *  （须在 startNewRound 之前判定）；排序变更在此轮界生效（每轮数量已热生效，不参与重建判定）。 */
     fun startNextRound() {
+        if (!ready || durableAction.busy) return
+        ready = false
         val s = session
         viewModelScope.launch {
-            // 设置热生效：轮界重读排序，变了才走重建口（init/设置变更/池尽三口之一）
-            val newSort = settings.sortStrategy.first()
-            if (s == null || newSort != sort || !s.roundEnded()) {
-                sort = newSort
-                rebuild()
+            val changed = controller.applySettings(settings.sortStrategy.first(), newMerged = true)
+            if (s == null || controller.decideNextRound(changed) == RoundAdvance.REBUILD) {
+                rebuild() // 设置已变更 / 池尽重扫
                 return@launch
             }
             s.startNewRound() // 指针不回拨：新轮消费下一段，旧轮项（含跳过）不重入
@@ -358,23 +405,37 @@ class VideoCardViewModel(
                 visitedIds = listOf(first)
             }
             sync()
+            ready = true
         }
     }
 
     /** 轮末结算快照入口；复制以隔离 BoardSession 的活集合。 */
     fun markedSnapshot(): List<MediaKey> = session?.markedIds?.toList().orEmpty()
 
+    fun reviewKeptAgain() {
+        if (!ready || durableAction.busy) return
+        ready = false
+        viewModelScope.launch {
+            try {
+                history.clear()
+                rebuild()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ready = true
+                actionError = "保留记录未能重置，请重试"
+            }
+        }
+    }
+
     /** 构造/重建会话（初始进入 / 换排序 / 开始下一轮共用）：
-     *  idOrder = source.ids(query) 排序序 + SortSpec.Random 时 fisherYates；visited/viewIndex/标记/镜像重置，
-     *  并消费首条进入 visited（首屏即有卡；空池 → 空态）。 */
+     *  构建细节（ids 快照 + 随机洗牌 + 查询构造）= SessionController 单一来源；
+     *  visited/viewIndex/标记/镜像重置，并消费首条进入 visited（首屏即有卡；空池 → 空态）。 */
     private suspend fun rebuild() {
         ready = false
         visitedIds = emptyList()
         viewIndex = 0
-        var order = source.ids(videoQuery())
-        if (sort == SortSpec.Random) order = fisherYates(order, Random.Default)
-        val s = BoardSession(order, currentRoundSize)
-        session = s
+        val s = controller.rebuild(currentRoundSize)
         val first = s.current
         if (first != null) {
             s.advance()
@@ -385,15 +446,22 @@ class VideoCardViewModel(
         ready = true
     }
 
-    private fun videoQuery(): MediaQuery = MediaQuery(
-        board = Board.VIDEO,
-        sort = sort,
-        matchTrashed = MediaStore.MATCH_EXCLUDE,
-        // visibility 为数据层预留位（MediaStoreDataSource 不消费）；板块内容按权限范围由查询结果天然决定
-        visibility = VisibleScope.FULL,
-    )
-
     // —— 详情加载（失败/被外部删除 → 自动前进不崩溃）+ 播放装片 ——
+
+    /** 行预取：会话指针后的未来 5 项（指针已越过当前展示卡，peekUpcoming 不含当前项）中
+     *  未缓存的合并为一次 queryByIds，结果全部入缓存 —— 否则 upcomingUris 恒空、海报预热空转。 */
+    private suspend fun prefetchUpcoming() {
+        val missing = session?.peekUpcoming(5).orEmpty().filter { !items.containsKey(it) }
+        if (missing.isEmpty()) return
+        val loaded = try {
+            source.queryByIds(missing, MediaStore.MATCH_EXCLUDE)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return // 预取失败不致命：滑到时走 prepareCard 正常路径
+        }
+        if (loaded.isNotEmpty()) items.putAll(loaded.associateBy { it.id })
+    }
 
     private suspend fun prepareCard(id: MediaKey?) {
         if (id == null) {
@@ -412,10 +480,10 @@ class VideoCardViewModel(
                 null // 读取异常按加载失败处理（PRD §5.5 失效项口径）
             }
             if (loaded == null) {
-                if (currentId == id) next() // 展示期间失效 → 自动前进
+                if (currentId == id && !durableAction.busy) nextStep() // 展示期间失效 → 自动前进
                 return
             }
-            if (currentId == id) items = items + (id to loaded)
+            if (currentId == id) items[id] = loaded
             loaded
         }
         if (visible && currentId == id) play(resolved)
