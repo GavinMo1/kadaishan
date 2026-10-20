@@ -9,6 +9,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DurableReviewActionTest {
+    @Test fun `cross round undo waits for keep revocation and preserves state on failure`() = runBlocking {
+        val session = BoardSession(listOf(1L, 2L, 3L), 2)
+        session.skip(1L)
+        session.skip(2L)
+        session.startNewRound(preserveUndo = true)
+        val revoked = session.keptIdsRevokedByUndo()
+        val gate = DurableReviewAction()
+        assertEquals(setOf(2L), revoked)
+        assertTrue(gate.begin())
+        try {
+            gate.complete({ throw IOException("disk full") }) { session.undo() }
+            fail("expected failure")
+        } catch (_: IOException) { }
+        assertEquals(3L, session.current)
+        assertEquals(0, session.consumed)
+        assertEquals(setOf(1L, 2L), session.keptIds)
+        assertTrue(gate.begin())
+        gate.complete({}) { session.undo() }
+        assertEquals(2L, session.current)
+        assertEquals(1, session.consumed)
+        assertEquals(setOf(1L), session.keptIds)
+    }
+
     @Test fun `slow commit holds current card and rejects a second gesture`() = runBlocking {
         val session = BoardSession(listOf(1L, 2L), 2)
         val gate = DurableReviewAction()

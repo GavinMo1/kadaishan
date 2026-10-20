@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 //  · 左/右/上滑 → GestureMapping 动作（Screen 侧解析后调 onAction）：
 //    MARK_DELETE → session.mark(id) 消耗前进；SKIP → session.skip(id) 消耗前进，并持久化保留记录；
 //    SHOW_INFO → infoOpen 浮层（不消耗，关闭后回到当前卡）；下滑（DOWN）不绑定 → 无动作；
-//  · 撤回：下滑手势 → session.undo()（栈空 = 无效，UI 拒绝触觉），连续撤回拨回本轮开头；
+//  · 撤回：下滑手势 → session.undo()（栈空 = 无效，UI 拒绝触觉），连续撤回拨回本轮开头，无标记自动切轮时也可回退上一轮；
 //  · 池尽判据：session.current == null && !session.roundEnded()；
 //  · 加载失败/被外部删除 → advance() 自动跳过不崩溃；
 //  · 会话生命周期（构建/轮界决策/设置变更判定）= SessionController 单一来源（与视频板共享）；
@@ -173,7 +173,7 @@ class PhotoCardViewModel(
         }
     }
 
-    // —— 撤回（下滑手势；连续撤回到本轮开头）——
+    // —— 撤回（含最近一次无标记自动切轮）——
 
     fun undo() {
         val s = session ?: return
@@ -191,15 +191,15 @@ class PhotoCardViewModel(
      *  轮界决策（同会话开新轮 / 重建）= SessionController.decideNextRound 单一来源（须在 startNewRound
      *  之前判定——开新轮后 roundEnded 恒 false）；START_NEW_ROUND 后池子恰好耗尽 → 重扫；
      *  每轮数量已由热生效通道同步，不参与判定。 */
-    fun startNextRound() {
+    fun startNextRound(preserveUndo: Boolean = false) {
         val s = session ?: return
         if (!ready || durableAction.busy) return
         ready = false // 过渡期按加载态渲染，盖住轮末/池尽残影
         viewModelScope.launch {
             when (controller.decideNextRound(applyRoundSettings())) {
                 RoundAdvance.START_NEW_ROUND -> {
-                    s.startNewRound() // 合同字面：标记与撤回栈复位，指针不回拨（跳过项不重入）
-                    if (s.current == null) {
+                    s.startNewRound(preserveUndo = preserveUndo && s.markedCount == 0)
+                    if (s.current == null && !preserveUndo) {
                         rebuild() // 池子恰好走完 → 重扫开新轮
                     } else {
                         refresh()

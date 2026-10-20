@@ -11,7 +11,7 @@ import dev.sxc.kadaishan.model.MediaKey
 //    skip 只对当前项。mark/unmark 对已标记 id 均为幂等无操作（按钮态自检读 markedIds）。
 //  · mark/skip 对非当前且非本窗口的 id（含上轮项）、轮末、池尽 = 无操作（不越界、不抛异常）。
 //  · unmark(id) = 纯状态取消标记（回看口，与回看 mark 对称）：不动指针、轮计数不变。
-//  · 指针只前进、undo 只降不升（不越轮起点）：已展示项不重入本轮、跳过项会话级出池由单调指针结构性保证；
+//  · 指针只前进、undo 只降不升（自动无标记切轮可回到上一轮）：已展示项不重入本轮、跳过项会话级出池由单调指针结构性保证；
 //    startNewRound() 不回拨指针；换新排序 = 构造新 BoardSession。本类不持久化（退出即弃）。
 //  · 纯 JVM：不依赖 android.*；MediaKey = Long。
 
@@ -50,9 +50,9 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
     }
 
     /** 撤回栈元素：动作 + 动作发生时的指针 —— 撤销 = 拨回该处（其后的普通 advance 一并回退）。 */
-    private class Frame(val action: SessionAction, val at: Int)
+    private class Frame(val action: SessionAction, val at: Int, val roundStart: Int)
 
-    /** 撤回栈（轮内；startNewRound 清空 —— 撤回不跨轮，跨轮撤回会把上轮项重入本轮）。 */
+    /** 撤回栈：默认轮界清空；无标记自动切轮可保留上一轮。 */
     private val undoStack = ArrayDeque<Frame>()
 
     /** 本轮标记（仅内存；未结算 = 未删除；startNewRound 丢弃）。 */
@@ -95,7 +95,7 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
     fun mark(id: MediaKey) {
         if (isCurrent(id)) {
             marks.add(id)
-            undoStack.addLast(Frame(SessionAction.Mark(id), pointer))
+            undoStack.addLast(Frame(SessionAction.Mark(id), pointer, roundStart))
             pointer++
             return
         }
@@ -103,7 +103,7 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
         val at = displayedIndex(id)
         if (at < 0) return
         marks.add(id)
-        undoStack.addLast(Frame(SessionAction.Mark(id), at))
+        undoStack.addLast(Frame(SessionAction.Mark(id), at, roundStart))
     }
 
     /** 取消标记（PRD §4.2「再点 = 取消标记」）：移出标记集并从撤回栈摘除该 Mark 帧，
@@ -122,7 +122,7 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
     fun skip(id: MediaKey) {
         if (!isCurrent(id)) return
         kept.add(id)
-        undoStack.addLast(Frame(SessionAction.Skip(id), pointer))
+        undoStack.addLast(Frame(SessionAction.Skip(id), pointer, roundStart))
         pointer++
     }
 
@@ -143,6 +143,8 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
         val frame = undoStack.removeLastOrNull() ?: return false
         if (frame.action is SessionAction.Mark) marks.remove(frame.action.id)
         if (frame.at < pointer) pointer = frame.at
+        // Return to the original round as well as its card; never produce a negative count.
+        if (pointer < roundStart) roundStart = frame.roundStart
         // Undo can rewind past later advances/actions: all decisions in that tail become undecided.
         kept.removeAll(order.drop(pointer).toSet())
         return true
@@ -154,12 +156,16 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
      *  轮末再放大（consumed < 新值）本轮复活，语义不变。 */
     fun roundEnded(): Boolean = pointer - roundStart >= roundSize
 
-    /** 开新轮：轮内计数与标记重置（上轮未结算标记丢弃 = 未删除）、撤回栈清空；
-     *  指针与 idOrder 快照不动 —— 已展示项与跳过项结构性不重入。 */
-    fun startNewRound() {
+    /** Manual/settled rounds close undo history. Automatic empty rounds may retain one prior round. */
+    fun startNewRound(preserveUndo: Boolean = false) {
+        if (preserveUndo && marks.isEmpty()) {
+            // Bound history to the round just completed, plus the new round's future actions.
+            undoStack.removeAll { it.at < roundStart }
+        } else {
+            undoStack.clear()
+        }
         roundStart = pointer
         marks.clear()
-        undoStack.clear()
     }
 
     /** 轮末或池尽：禁止再消耗。 */

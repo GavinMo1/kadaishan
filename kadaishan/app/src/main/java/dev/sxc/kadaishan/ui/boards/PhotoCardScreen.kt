@@ -181,7 +181,7 @@ fun PhotoCardScreen(
     LaunchedEffect(vm.ready, vm.roundEnded, vm.currentId) {
         if (vm.ready && vm.currentId == null) {
             if (vm.markedCount > 0) settlementOpen = true
-            else if (vm.roundEnded) vm.startNextRound()
+            else if (vm.roundEnded) vm.startNextRound(preserveUndo = true)
         }
     }
 

@@ -10,6 +10,96 @@ import org.junit.Test
 /** PRD §4.1/§4.4 池子与轮次语义 + 架构 §2 BoardSession（纯 JVM，断言具体值）。 */
 class BoardSessionTest {
 
+    @Test fun `empty automatic round retains last keep and restores original round count`() {
+        val s = BoardSession(listOf(1L, 2L, 3L, 4L), 2)
+        s.skip(1L)
+        s.skip(2L)
+        s.startNewRound(preserveUndo = true)
+        assertEquals(3L, s.current)
+        assertEquals(0, s.consumed)
+        assertTrue(s.undoAvailable)
+        assertEquals(setOf(2L), s.keptIdsRevokedByUndo())
+        assertTrue(s.undo())
+        assertEquals(2L, s.current)
+        assertEquals(1, s.consumed)
+        assertEquals(setOf(1L), s.keptIds)
+        s.mark(2L) // Correct the previous round's last card: settles in that round.
+        assertTrue(s.roundEnded())
+        assertEquals(setOf(2L), s.markedIds)
+        s.startNewRound() // Settlement is a hard undo boundary.
+        assertFalse(s.undoAvailable)
+        assertEquals(3L, s.current)
+    }
+
+    @Test fun `current round actions undo before previous round keeps`() {
+        val s = BoardSession(listOf(1L, 2L, 3L, 4L, 5L), 2)
+        s.skip(1L)
+        s.skip(2L)
+        s.startNewRound(preserveUndo = true)
+        s.mark(3L)
+        assertTrue(s.undo())
+        assertEquals(3L, s.current)
+        assertEquals(0, s.consumed)
+        assertTrue(s.undo())
+        assertEquals(2L, s.current)
+        assertEquals(1, s.consumed)
+        assertTrue(s.undo())
+        assertEquals(1L, s.current)
+        assertEquals(0, s.consumed)
+        assertFalse(s.undo())
+    }
+
+    @Test fun `automatic history retains only most recently completed round`() {
+        val s = BoardSession((1L..7L).toList(), 2)
+        s.skip(1L)
+        s.skip(2L)
+        s.startNewRound(preserveUndo = true)
+        s.skip(3L)
+        s.skip(4L)
+        s.startNewRound(preserveUndo = true)
+        assertTrue(s.undo())
+        assertEquals(4L, s.current)
+        assertEquals(1, s.consumed)
+        assertTrue(s.undo())
+        assertEquals(3L, s.current)
+        assertEquals(0, s.consumed)
+        assertFalse(s.undo())
+        assertEquals(setOf(1L, 2L), s.keptIds)
+    }
+
+    @Test fun `pool exhaustion still permits undo of last automatically kept photo`() {
+        val s = BoardSession(listOf(1L), 1)
+        s.skip(1L)
+        s.startNewRound(preserveUndo = true)
+        assertNull(s.current)
+        assertFalse(s.roundEnded())
+        assertTrue(s.undo())
+        assertEquals(1L, s.current)
+        assertEquals(0, s.consumed)
+    }
+
+    @Test fun `round with deletion marks cannot preserve undo even when requested`() {
+        val s = BoardSession(listOf(1L, 2L, 3L), 2)
+        s.mark(1L)
+        s.skip(2L)
+        s.startNewRound(preserveUndo = true)
+        assertFalse(s.undoAvailable)
+        assertFalse(s.undo())
+        assertEquals(3L, s.current)
+    }
+
+    @Test fun `cross round undo after hot round size change keeps count nonnegative`() {
+        val s = BoardSession((1L..6L).toList(), 2)
+        s.skip(1L)
+        s.skip(2L)
+        s.startNewRound(preserveUndo = true)
+        s.updateRoundSize(4)
+        assertTrue(s.undo())
+        assertEquals(1, s.consumed)
+        assertFalse(s.roundEnded())
+        assertEquals(2L, s.current)
+    }
+
     private fun ids(n: Int): List<Long> = (1..n).map { it.toLong() }
 
     @Test
