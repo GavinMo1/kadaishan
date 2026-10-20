@@ -57,10 +57,6 @@ class ReviewHistoryRepository(
         diagnostic("committed keep=$kept count=${ids.size} ids=${ids.take(5)}")
     }
 
-    override suspend fun clear() {
-        scope.async(start = CoroutineStart.UNDISPATCHED) { writes.withLock { dataStore.edit { it.remove(KEY_KEPT) } } }.await()
-    }
-
     companion object {
         private val KEY_KEPT = stringSetPreferencesKey("kept_media_ids")
         @Volatile private var instance: ReviewHistoryRepository? = null

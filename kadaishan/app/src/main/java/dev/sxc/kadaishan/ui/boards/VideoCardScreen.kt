@@ -417,11 +417,13 @@ fun VideoCardScreen(
                     text = "检查新视频",
                     onClick = { vm.startNextRound() },
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                OnDarkButton(
-                    text = "重新整理已保留项目",
-                    onClick = { vm.reviewKeptAgain() },
-                )
+                if (vm.markedCount == 0) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OnDarkButton(
+                        text = "重置视频进度",
+                        onClick = { vm.reviewKeptAgain() },
+                    )
+                }
             }
         }
 

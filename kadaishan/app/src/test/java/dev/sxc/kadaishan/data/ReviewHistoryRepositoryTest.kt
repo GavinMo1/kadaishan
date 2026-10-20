@@ -80,8 +80,8 @@ class ReviewHistoryRepositoryTest {
                 PreferenceDataStoreFactory.create(scope = secondScope) { file }, secondScope,
             )
             assertEquals(setOf(1L, 3L), second.keptIds())
-            second.clear()
-            assertEquals(emptySet<Long>(), second.keptIds())
+            second.setKept(setOf(1L), false)
+            assertEquals(setOf(3L), second.keptIds())
         } finally {
             secondJob.cancelAndJoin()
         }

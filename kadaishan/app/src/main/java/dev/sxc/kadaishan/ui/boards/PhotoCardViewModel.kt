@@ -215,11 +215,11 @@ class PhotoCardViewModel(
     fun markedSnapshot(): List<MediaKey> = session?.markedIds?.toList().orEmpty()
 
     fun reviewKeptAgain() {
-        if (!ready || durableAction.busy) return
+        if (!ready || durableAction.busy || currentId != null || markedCount > 0) return
         ready = false
         viewModelScope.launch {
             try {
-                history.clear()
+                controller.resetKeptForMediaKind()
                 rebuild()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

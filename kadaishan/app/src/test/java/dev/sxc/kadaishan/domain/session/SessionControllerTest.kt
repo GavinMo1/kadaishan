@@ -26,7 +26,6 @@ class SessionControllerTest {
             override suspend fun setKept(ids: Set<MediaKey>, value: Boolean) {
                 if (value) kept.addAll(ids) else kept.removeAll(ids)
             }
-            override suspend fun clear() = kept.clear()
         }
         val source = FakeSource(listOf(1L, 2L, 3L))
         fun fresh() = SessionController(source, Board.PHOTO, 0, history = history).apply {
@@ -44,7 +43,7 @@ class SessionControllerTest {
         assertEquals(1L, fresh().rebuild(20).current)
         history.setKept(setOf(1L, 2L, 3L), true)
         assertEquals(null, fresh().rebuild(20).current) // Exhaustion must not silently recycle kept items.
-        history.clear()
+        fresh().resetKeptForMediaKind()
         assertEquals(1L, fresh().rebuild(20).current)
     }
 

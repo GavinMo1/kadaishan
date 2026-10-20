@@ -333,3 +333,5 @@ iOS 多选语汇：24dp 圆、未选 1.5dp checkRing 灰环 → 选中 Action Bl
 - **Don't** 让 chrome 占据布局位、或让内容为 chrome 让位。
 - **Don't** 在浅媒体面上放不透明控件牌——媒体面控件一律半透（黑透圆牌 / 黑 @40% 圆片），保证影像透出。
 - **Don't** 把 danger 红用于非破坏性语义，或把 Action Blue 用于不可点元素。
+
+完成空态在检查新媒体按钮下提供「重置图片进度」或「重置视频进度」，图片沿用 PearlButton，视频沿用 OnDarkButton；有待结算项时隐藏。重置范围与失败行为见 PRD §4.4。

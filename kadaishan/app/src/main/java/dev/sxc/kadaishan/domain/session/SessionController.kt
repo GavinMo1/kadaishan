@@ -65,6 +65,13 @@ class SessionController(
         return s
     }
 
+    /** Reset only accessible live media of the current kind; image categories reset together. */
+    suspend fun resetKeptForMediaKind() {
+        val target = if (board == Board.VIDEO) Board.VIDEO else Board.PHOTO
+        val ids = source.ids(query().copy(board = target, mergeImages = target == Board.PHOTO))
+        history?.setKept(ids.toSet(), false)
+    }
+
     /** 「开始下一轮」决策：设置已变更 / 无会话 / 本轮未正常收尾（池尽中断）→ 重建；否则同会话开新轮。
      *  START_NEW_ROUND 后若 session.current == null（池子恰好耗尽），由调用方决定重扫或呈空态。 */
     fun decideNextRound(settingsChanged: Boolean): RoundAdvance {

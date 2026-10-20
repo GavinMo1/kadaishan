@@ -6,5 +6,4 @@ import dev.sxc.kadaishan.model.MediaKey
 interface ReviewHistory {
     suspend fun keptIds(): Set<MediaKey>
     suspend fun setKept(ids: Set<MediaKey>, kept: Boolean)
-    suspend fun clear()
 }
