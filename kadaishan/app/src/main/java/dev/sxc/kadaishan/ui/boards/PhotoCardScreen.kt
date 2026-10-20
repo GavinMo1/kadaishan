@@ -123,6 +123,8 @@ fun PhotoCardScreen(
     deleter: MediaDeleter,
     pendingSettlement: PendingSettlementRepository,
     history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    gestureHints: GestureHintViewModel,
+    hintActive: Boolean,
     onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
@@ -199,6 +201,13 @@ fun PhotoCardScreen(
     BackHandler(enabled = vm.infoOpen) { vm.infoOpen = false }
 
     val item: MediaItem? = vm.currentId?.let { vm.items[it] }
+    val showGestureHint = boardGestureHintVisible(
+        hints = gestureHints,
+        board = board.name,
+        eligible = hintActive && vm.ready && item != null && !vm.infoOpen && !settlementOpen,
+        interaction = Triple(vm.currentId, vm.seenCount, vm.markedCount),
+    )
+
 
     // 信息卡设备型号（按需 suspend 读取；信息卡打开且条目就绪时才发起）
     var exif by remember(vm.currentId) { mutableStateOf<ExifSummary?>(null) }
@@ -438,8 +447,8 @@ fun PhotoCardScreen(
             }
         }
 
-        // ② 首轮首卡一次性手势提示（文案随映射动态生成；首次滑动后自然消失）——卡面无角标按钮
-        if (vm.ready && vm.currentId != null && vm.seenCount == 0) {
+        // ② 每次打开 App 的共享一次提示，沿用当前手势映射。
+        if (showGestureHint) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

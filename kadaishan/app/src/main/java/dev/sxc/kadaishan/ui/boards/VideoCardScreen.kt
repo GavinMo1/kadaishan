@@ -118,6 +118,8 @@ fun VideoCardScreen(
     deleter: MediaDeleter,
     pendingSettlement: PendingSettlementRepository,
     history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    gestureHints: GestureHintViewModel,
+    hintActive: Boolean,
     onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
@@ -180,6 +182,13 @@ fun VideoCardScreen(
 
     val currentId = vm.currentId
     val poster: MediaItem? = currentId?.let { vm.items[it] }
+    val showGestureHint = boardGestureHintVisible(
+        hints = gestureHints,
+        board = "VIDEO",
+        eligible = hintActive && vm.ready && poster != null && !vm.infoOpen && !settlementOpen,
+        interaction = Triple(currentId, vm.viewIndex, vm.markedIds),
+    )
+
 
     // 跳后 Snackbar「已标记第 N 个 · 撤回」（Short = 4s ≥ 1.5s；撤回 = unmark 该 id）
     val snackbarHostState = remember { SnackbarHostState() }
@@ -426,6 +435,7 @@ fun VideoCardScreen(
                             if (!vm.infoOpen) {
                                 haptics.tap()
                                 vm.togglePlayPause()
+                                gestureHints.dismiss("VIDEO")
                             }
                         },
                         onLongPress = {
@@ -499,7 +509,7 @@ fun VideoCardScreen(
             VideoScrubber(
                 positionMs = vm.positionMs,
                 durationMs = vm.durationMs,
-                onSeek = { f -> vm.seekTo(f) },
+                onSeek = { f -> vm.seekTo(f); gestureHints.dismiss("VIDEO") },
                 onSeekFinished = { f ->
                     haptics.tick()
                     vm.seekTo(f)
@@ -510,8 +520,8 @@ fun VideoCardScreen(
             )
         }
 
-        // 首轮首卡一次性操作提示：首次导航/标记（visited 增长或指针移动）后条件自然失效，无需状态位
-        if (vm.ready && currentId != null && vm.visitedIds.size <= 1 && vm.viewIndex == 0) {
+        // 每次打开 App 的共享一次提示，图片板已经显示过则不再显示。
+        if (showGestureHint) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

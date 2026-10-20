@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.viewModels
+import dev.sxc.kadaishan.ui.boards.GestureHintViewModel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.SystemBarStyle
@@ -91,6 +93,18 @@ import kotlinx.coroutines.launch
 
 /** 单 Activity 入口：edge-to-edge + 顶层组装（权限三分支 / 板块 / 设置 push）。 */
 class MainActivity : ComponentActivity() {
+    private val gestureHints by viewModels<GestureHintViewModel>()
+
+    override fun onStart() {
+        super.onStart()
+        gestureHints.setForeground(true)
+    }
+
+    override fun onStop() {
+        gestureHints.setForeground(false)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.WHITE, android.graphics.Color.WHITE),
@@ -105,7 +119,7 @@ class MainActivity : ComponentActivity() {
         val container = AppContainer(applicationContext)
         setContent {
             AppTheme {
-                AppRoot(container)
+                AppRoot(container, gestureHints)
             }
         }
     }
@@ -146,7 +160,7 @@ private tailrec fun Context.findActivity(): ComponentActivity? = when (this) {
 }
 
 @Composable
-fun AppRoot(container: AppContainer) {
+fun AppRoot(container: AppContainer, gestureHints: GestureHintViewModel) {
     val context = LocalContext.current
     var scope by remember { mutableStateOf(context.mediaScope()) }
 
@@ -214,6 +228,7 @@ fun AppRoot(container: AppContainer) {
 
                 else -> MainContent(
                     container = container,
+                    gestureHints = gestureHints,
                     scope = scope,
                     onGrantAll = {
                         settingsFallback = true
@@ -310,6 +325,7 @@ private fun DeniedGuide(onGrant: () -> Unit) {
 @Composable
 private fun MainContent(
     container: AppContainer,
+    gestureHints: GestureHintViewModel,
     scope: VisibleScope,
     onGrantAll: () -> Unit,
 ) {
@@ -393,6 +409,8 @@ private fun MainContent(
                         container.mediaDeleter,
                         container.pendingSettlement,
                         container.reviewHistory,
+                        gestureHints = gestureHints,
+                        hintActive = page == "board",
                         onOpenTrash = { showTrash = true },
                         onToggleChrome = onToggleChrome,
                         onInteract = onInteract,
@@ -406,6 +424,8 @@ private fun MainContent(
                         container.mediaDeleter,
                         container.pendingSettlement,
                         container.reviewHistory,
+                        gestureHints = gestureHints,
+                        hintActive = page == "board",
                         onOpenTrash = { showTrash = true },
                         onToggleChrome = onToggleChrome,
                         onInteract = onInteract,
