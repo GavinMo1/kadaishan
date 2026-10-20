@@ -10,6 +10,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -150,6 +155,7 @@ fun SettlementPanel(
     var flow by remember { mutableStateOf<BatchFlow?>(null) }
     var outgoing by remember { mutableStateOf<IntentSender?>(null) }
     var results by rememberSaveable { mutableStateOf<List<SettlementItemResult>>(emptyList()) }
+    var previewId by rememberSaveable(markedIds) { mutableStateOf<Long?>(null) }
     var savingKeep by remember { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     var operation by rememberSaveable(stateSaver = enumSaver<SystemOperation>()) { mutableStateOf(SystemOperation.DELETE) }
@@ -353,7 +359,9 @@ fun SettlementPanel(
     }
 
     LaunchedEffect(Unit) { enterFraction.animateTo(1f, if (reduced) snap() else Daylight.drawer()) }
-    BackHandler { if (closable) dismissAnimated() }
+    BackHandler {
+        if (previewId != null) previewId = null else if (closable) dismissAnimated()
+    }
 
     val confirmAction: () -> Unit = {
         if (!savingKeep && stage == PanelStage.REVIEW) {
@@ -388,7 +396,7 @@ fun SettlementPanel(
     val hostSafeArea = WindowInsets.safeDrawing.union(WindowInsets.mandatorySystemGestures).asPaddingValues()
     val direction = LocalLayoutDirection.current
     Dialog(
-        onDismissRequest = { dismissAnimated() },
+        onDismissRequest = { if (previewId != null) previewId = null else dismissAnimated() },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
             dismissOnBackPress = closable,
@@ -397,206 +405,233 @@ fun SettlementPanel(
         ),
     ) {
         val dialogSafeArea = WindowInsets.safeDrawing.union(WindowInsets.mandatorySystemGestures).asPaddingValues()
-        Column(
-            modifier = Modifier.fillMaxSize()
-                .graphicsLayer { translationY = (1f - enterFraction.value) * size.height }
-                .background(Daylight.canvas)
-                .padding(
-                    start = maxOf(hostSafeArea.calculateStartPadding(direction), dialogSafeArea.calculateStartPadding(direction)),
-                    top = maxOf(hostSafeArea.calculateTopPadding(), dialogSafeArea.calculateTopPadding()),
-                    end = maxOf(hostSafeArea.calculateEndPadding(direction), dialogSafeArea.calculateEndPadding(direction)),
-                    bottom = maxOf(hostSafeArea.calculateBottomPadding(), dialogSafeArea.calculateBottomPadding(), 24.dp),
-                ),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp).padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        val safePadding = PaddingValues(
+            start = maxOf(hostSafeArea.calculateStartPadding(direction), dialogSafeArea.calculateStartPadding(direction)),
+            top = maxOf(hostSafeArea.calculateTopPadding(), dialogSafeArea.calculateTopPadding()),
+            end = maxOf(hostSafeArea.calculateEndPadding(direction), dialogSafeArea.calculateEndPadding(direction)),
+            bottom = maxOf(hostSafeArea.calculateBottomPadding(), dialogSafeArea.calculateBottomPadding(), 24.dp),
+        )
+        val context = LocalContext.current
+        val imageLoader = remember(context) {
+            ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.build()
+        }
+        Box(Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.fillMaxSize()
+                    .graphicsLayer { translationY = (1f - enterFraction.value) * size.height }
+                    .background(Daylight.canvas)
+                    .then(if (previewId != null) Modifier.clearAndSetSemantics {} else Modifier)
+                    .padding(safePadding),
             ) {
-                if (closable) TextActionButton(
-                    text = if (stage == PanelStage.RESULT) "继续整理" else "‹ 返回",
-                    onClick = { dismissAnimated() },
-                ) else Spacer(Modifier.width(16.dp))
-                Spacer(Modifier.weight(1f))
-                if (stage == PanelStage.REVIEW && available.isNotEmpty() && !savingKeep) TextActionButton(
-                    text = if (chosen.isEmpty()) "全选" else "全不选",
-                    onClick = {
-                        haptics.tap()
-                        chosen = if (chosen.isEmpty()) available.map { it.id }.toSet() else emptySet()
-                    },
-                )
-            }
-            when (stage) {
-                PanelStage.LOADING -> LoadingContent("正在准备待删除项…")
-                PanelStage.REVIEW -> {
-                    val context = LocalContext.current
-                    val imageLoader = remember(context) {
-                        ImageLoader.Builder(context).components { add(VideoFrameDecoder.Factory()) }.build()
-                    }
-                    Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
-                        Text(
-                            if (available.isEmpty()) "没有待删除项" else "确认待删除的项目",
-                            style = MaterialTheme.typography.headlineSmall, color = Daylight.ink,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "本轮浏览 $totalInRound 项，标记 ${available.size} 项",
-                            style = MaterialTheme.typography.bodyMedium, color = Daylight.inkSub,
-                        )
-                        Spacer(Modifier.height(20.dp))
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(96.dp),
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(bottom = 16.dp),
-                        ) {
-                            gridItems(available, key = { it.id }) { item ->
-                                val checked = item.id in chosen
-                                Box(
-                                    Modifier.aspectRatio(1f).semantics { selected = checked }
-                                        .clip(RoundedCornerShape(Daylight.radiusMd))
-                                        .background(Daylight.parchment)
-                                        .daylightRowClickable(enabled = !savingKeep) {
-                                            haptics.tap()
-                                            chosen = if (checked) chosen - item.id else chosen + item.id
-                                        },
-                                ) {
-                                    AsyncImage(
-                                        model = item.uri, imageLoader = imageLoader,
-                                        contentDescription = "${item.displayName}，${if (checked) "已选择删除" else "保留"}",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize().alpha(if (checked) 1f else 0.45f),
-                                    )
-                                    Box(
-                                        Modifier.align(Alignment.TopEnd).padding(6.dp)
-                                            .clip(RoundedCornerShape(Daylight.pillRadius))
-                                            .background(Daylight.canvas).padding(2.dp),
-                                    ) { CircleCheck(checked = checked) }
-                                }
-                            }
-                        }
-                    }
-                    Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                    ) {
-                        // Only secondary options scroll; the primary action stays outside the viewport.
-                        Column(
-                            Modifier.fillMaxWidth().heightIn(max = 180.dp)
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            error?.let { Text(it, color = Daylight.danger, style = MaterialTheme.typography.bodyMedium) }
-                            if (permanentAllowed && chosen.isNotEmpty()) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (permDelete) "永久删除" else "移入回收站，可找回",
-                                        Modifier.weight(1f), color = if (permDelete) Daylight.danger else Daylight.inkSub,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    TextActionButton(
-                                        text = if (showDeleteOptions) "收起" else "更改",
-                                        onClick = { showDeleteOptions = !showDeleteOptions },
-                                    )
-                                }
-                                if (showDeleteOptions) Row(
-                                    Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text("立即永久删除", Modifier.weight(1f), color = Daylight.ink)
-                                    Switch(
-                                        enabled = !savingKeep, checked = permDelete, onCheckedChange = { haptics.tap(); permDelete = it },
-                                        thumbContent = {},
-                                        colors = SwitchDefaults.colors(
-                                            checkedTrackColor = Daylight.danger, checkedThumbColor = Daylight.onPrimary,
-                                            uncheckedTrackColor = Daylight.hairline, uncheckedThumbColor = Daylight.canvas,
-                                        ),
-                                    )
-                                }
-                            }
-                            if (permDelete) {
-                                Text(
-                                    if (chosen.size > PERM_DELETE_CAP) "永久删除最多 $PERM_DELETE_CAP 项，请减少勾选或改用回收站"
-                                    else "永久删除不可恢复",
-                                    color = Daylight.danger, style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        when {
-                            chosen.isEmpty() -> PillButton(
-                                text = if (savingKeep) "正在保存…" else "保留全部，继续整理",
-                                enabled = !savingKeep,
-                                onClick = {
-                                    if (!savingKeep) {
-                                        savingKeep = true
-                                        scope.launch {
-                                            try {
-                                                onKeep(available.map { it.id }.toSet())
-                                                (onExitRound ?: onNextRound)()
-                                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                                throw e
-                                            } catch (e: Exception) {
-                                                error = "保留记录未能保存，请重试"
-                                            } finally { savingKeep = false }
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            permDelete -> DangerPillButton(
-                                text = "永久删除 ${chosen.size} 项",
-                                onClick = confirmAction, enabled = !savingKeep && chosen.size <= PERM_DELETE_CAP,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            else -> PillButton(
-                                text = "移入回收站 ${chosen.size} 项 · ${formatSize(available.filter { it.id in chosen }.sumOf { it.sizeBytes })}",
-                                onClick = confirmAction, enabled = !savingKeep, modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        Spacer(Modifier.height(16.dp))
-                    }
-                }
-                PanelStage.CONFIRMING -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    val f = flow
-                    LoadingContent(
-                        if (operation == SystemOperation.RESTORE) "正在请求找回…"
-                        else if (f != null && f.totalBatches > 1) "请确认第 ${f.index + 1}/${f.totalBatches} 批删除"
-                        else "请在系统弹窗中确认",
+                Row(
+                    Modifier.fillMaxWidth().defaultMinSize(minHeight = 52.dp).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (closable) TextActionButton(
+                        text = if (stage == PanelStage.RESULT) "继续整理" else "‹ 返回",
+                        onClick = { dismissAnimated() },
+                    ) else Spacer(Modifier.width(16.dp))
+                    Spacer(Modifier.weight(1f))
+                    if (stage == PanelStage.REVIEW && available.isNotEmpty() && !savingKeep) TextActionButton(
+                        text = if (chosen.isEmpty()) "全选" else "全不选",
+                        onClick = {
+                            haptics.tap()
+                            chosen = if (chosen.isEmpty()) available.map { it.id }.toSet() else emptySet()
+                        },
                     )
                 }
-                PanelStage.VERIFYING -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    LoadingContent("正在核对删除结果…")
-                }
-                PanelStage.RESULT -> ResultContent(
-                    results = results, mode = deleteMode, error = error,
-                    modifier = Modifier.weight(1f),
-                    onRetry = {
-                        val retry = results.filter { it.status == SettlementItemStatus.NOT_EXECUTED }.map { it.item }
-                        if (retry.isNotEmpty()) {
-                            flow = BatchFlow(retry, BATCH_CAP)
-                            operation = SystemOperation.DELETE
-                            error = null
-                            stage = PanelStage.CONFIRMING
-                            scope.launch {
-                                pendingStore.save(PendingSettlement(snapshot, deleteMode, 0, ceil(retry.size / BATCH_CAP.toDouble()).toInt()))
-                                launchCurrentBatch()
+                when (stage) {
+                    PanelStage.LOADING -> LoadingContent("正在准备待删除项…")
+                    PanelStage.REVIEW -> {
+                        Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp)) {
+                            Text(
+                                if (available.isEmpty()) "没有待删除项" else "确认待删除的项目",
+                                style = MaterialTheme.typography.headlineSmall, color = Daylight.ink,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "本轮浏览 $totalInRound 项，标记 ${available.size} 项",
+                                style = MaterialTheme.typography.bodyMedium, color = Daylight.inkSub,
+                            )
+                            Spacer(Modifier.height(20.dp))
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(96.dp),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                contentPadding = PaddingValues(bottom = 16.dp),
+                            ) {
+                                gridItems(available, key = { it.id }) { item ->
+                                    val checked = item.id in chosen
+                                    Box(
+                                        Modifier.aspectRatio(1f).semantics { contentDescription = "查看 ${item.displayName}" }
+                                            .clip(RoundedCornerShape(Daylight.radiusMd))
+                                            .background(Daylight.parchment)
+                                            .daylightRowClickable(enabled = !savingKeep) {
+                                                haptics.tap()
+                                                previewId = item.id
+                                            },
+                                    ) {
+                                        AsyncImage(
+                                            model = item.uri, imageLoader = imageLoader,
+                                            contentDescription = "${item.displayName}，${if (checked) "已选择删除" else "保留"}",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().alpha(if (checked) 1f else 0.45f),
+                                        )
+                                        Box(
+                                            Modifier.align(Alignment.TopEnd).size(48.dp)
+                                                .semantics { contentDescription = "${item.displayName}，待删除选择" }
+                                                .toggleable(value = checked, enabled = !savingKeep, role = Role.Checkbox) {
+                                                    haptics.tap()
+                                                    chosen = if (it) chosen + item.id else chosen - item.id
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Box(Modifier.clip(RoundedCornerShape(Daylight.pillRadius))
+                                                .background(Daylight.canvas).padding(2.dp)) {
+                                                CircleCheck(checked = checked)
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                    },
-                    onRecheck = { error = null; verify() },
-                    onRestore = {
-                        val trashed = results.filter { it.status == SettlementItemStatus.TRASHED }.map { it.item }
-                        if (trashed.isNotEmpty()) {
-                            snapshot = trashed
-                            flow = BatchFlow(trashed, BATCH_CAP)
-                            operation = SystemOperation.RESTORE
-                            error = null
-                            stage = PanelStage.CONFIRMING
-                            launchCurrentBatch()
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        ) {
+                            // Only secondary options scroll; the primary action stays outside the viewport.
+                            Column(
+                                Modifier.fillMaxWidth().heightIn(max = 180.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                error?.let { Text(it, color = Daylight.danger, style = MaterialTheme.typography.bodyMedium) }
+                                if (permanentAllowed && chosen.isNotEmpty()) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            if (permDelete) "永久删除" else "移入回收站，可找回",
+                                            Modifier.weight(1f), color = if (permDelete) Daylight.danger else Daylight.inkSub,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                        TextActionButton(
+                                            text = if (showDeleteOptions) "收起" else "更改",
+                                            onClick = { showDeleteOptions = !showDeleteOptions },
+                                        )
+                                    }
+                                    if (showDeleteOptions) Row(
+                                        Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text("立即永久删除", Modifier.weight(1f), color = Daylight.ink)
+                                        Switch(
+                                            enabled = !savingKeep, checked = permDelete, onCheckedChange = { haptics.tap(); permDelete = it },
+                                            thumbContent = {},
+                                            colors = SwitchDefaults.colors(
+                                                checkedTrackColor = Daylight.danger, checkedThumbColor = Daylight.onPrimary,
+                                                uncheckedTrackColor = Daylight.hairline, uncheckedThumbColor = Daylight.canvas,
+                                            ),
+                                        )
+                                    }
+                                }
+                                if (permDelete) {
+                                    Text(
+                                        if (chosen.size > PERM_DELETE_CAP) "永久删除最多 $PERM_DELETE_CAP 项，请减少勾选或改用回收站"
+                                        else "永久删除不可恢复",
+                                        color = Daylight.danger, style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            when {
+                                chosen.isEmpty() -> PillButton(
+                                    text = if (savingKeep) "正在保存…" else "保留全部，继续整理",
+                                    enabled = !savingKeep,
+                                    onClick = {
+                                        if (!savingKeep) {
+                                            savingKeep = true
+                                            scope.launch {
+                                                try {
+                                                    onKeep(available.map { it.id }.toSet())
+                                                    (onExitRound ?: onNextRound)()
+                                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    error = "保留记录未能保存，请重试"
+                                                } finally { savingKeep = false }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                permDelete -> DangerPillButton(
+                                    text = "永久删除 ${chosen.size} 项",
+                                    onClick = confirmAction, enabled = !savingKeep && chosen.size <= PERM_DELETE_CAP,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                else -> PillButton(
+                                    text = "移入回收站 ${chosen.size} 项 · ${formatSize(available.filter { it.id in chosen }.sumOf { it.sizeBytes })}",
+                                    onClick = confirmAction, enabled = !savingKeep, modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            Spacer(Modifier.height(16.dp))
                         }
-                    },
-                    onNext = { leaveResult() },
-                )
+                    }
+                    PanelStage.CONFIRMING -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        val f = flow
+                        LoadingContent(
+                            if (operation == SystemOperation.RESTORE) "正在请求找回…"
+                            else if (f != null && f.totalBatches > 1) "请确认第 ${f.index + 1}/${f.totalBatches} 批删除"
+                            else "请在系统弹窗中确认",
+                        )
+                    }
+                    PanelStage.VERIFYING -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        LoadingContent("正在核对删除结果…")
+                    }
+                    PanelStage.RESULT -> ResultContent(
+                        results = results, mode = deleteMode, error = error,
+                        modifier = Modifier.weight(1f),
+                        onRetry = {
+                            val retry = results.filter { it.status == SettlementItemStatus.NOT_EXECUTED }.map { it.item }
+                            if (retry.isNotEmpty()) {
+                                flow = BatchFlow(retry, BATCH_CAP)
+                                operation = SystemOperation.DELETE
+                                error = null
+                                stage = PanelStage.CONFIRMING
+                                scope.launch {
+                                    pendingStore.save(PendingSettlement(snapshot, deleteMode, 0, ceil(retry.size / BATCH_CAP.toDouble()).toInt()))
+                                    launchCurrentBatch()
+                                }
+                            }
+                        },
+                        onRecheck = { error = null; verify() },
+                        onRestore = {
+                            val trashed = results.filter { it.status == SettlementItemStatus.TRASHED }.map { it.item }
+                            if (trashed.isNotEmpty()) {
+                                snapshot = trashed
+                                flow = BatchFlow(trashed, BATCH_CAP)
+                                operation = SystemOperation.RESTORE
+                                error = null
+                                stage = PanelStage.CONFIRMING
+                                launchCurrentBatch()
+                            }
+                        },
+                        onNext = { leaveResult() },
+                    )
+                }
+            }
+            previewId?.takeIf { stage == PanelStage.REVIEW }?.let { id ->
+                androidx.compose.runtime.key(id) {
+                    ReviewMediaPreview(
+                        id = id, source = source, imageLoader = imageLoader,
+                        selected = id in chosen,
+                        onToggle = {
+                            haptics.tap()
+                            chosen = if (id in chosen) chosen - id else chosen + id
+                        },
+                        onClose = { previewId = null },
+                        modifier = Modifier.fillMaxSize().background(Daylight.canvas).padding(safePadding),
+                    )
+                }
             }
         }
     }

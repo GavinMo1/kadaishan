@@ -1,9 +1,7 @@
 package dev.sxc.kadaishan.ui.boards
 
-import android.graphics.drawable.ColorDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
@@ -15,11 +13,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateCentroid
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -57,17 +50,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -99,7 +87,6 @@ import dev.sxc.kadaishan.ui.kit.productShadow
 import dev.sxc.kadaishan.ui.kit.rememberHaptics
 import dev.sxc.kadaishan.ui.kit.rememberReducedMotion
 import dev.sxc.kadaishan.ui.settle.SettlementPanel
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -553,164 +540,21 @@ private fun MediaCard(
     onZoomChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
-    val haptics = rememberHaptics()
-    val reduced = rememberReducedMotion()
-    val zoomSpec = if (reduced) snap<Float>() else Daylight.spatial<Float>()
-    val scale = remember { Animatable(1f) }
-    val panX = remember { Animatable(0f) }
-    val panY = remember { Animatable(0f) }
-    var viewSize by remember { mutableStateOf(IntSize.Zero) }
-    // 双击动画 Job：捏合起手即取消（手势接管变换，避免两源打架）
-    var tapAnimJob by remember { mutableStateOf<Job?>(null) }
-
-    // ContentScale.Fit 下影像的实际显示尺寸（信箱式留白不计入平移边界）
-    fun displayedSize(): Pair<Float, Float> {
-        val vw = viewSize.width.toFloat()
-        val vh = viewSize.height.toFloat()
-        if (vw <= 0f || vh <= 0f) return 0f to 0f
-        if (item.width <= 0 || item.height <= 0) return vw to vh
-        val f = minOf(vw / item.width, vh / item.height)
-        return item.width * f to item.height * f
-    }
-
-    /** 平移边界：影像边缘最多对齐卡缘（该轴未超出卡面时锁中）。 */
-    fun clampPan(s: Float, x: Float, y: Float): Pair<Float, Float> {
-        val (dw, dh) = displayedSize()
-        val maxX = maxOf(0f, (dw * s - viewSize.width) / 2f)
-        val maxY = maxOf(0f, (dh * s - viewSize.height) / 2f)
-        return x.coerceIn(-maxX, maxX) to y.coerceIn(-maxY, maxY)
-    }
-
     Box(
-        modifier = modifier
-            .fillMaxSize()
+        modifier = modifier.fillMaxSize()
             .padding(
-                start = 12.dp,
-                end = 12.dp,
-                // 顶部余量 = 悬浮 chrome 高 48 + 节奏间距 12（间距律 4dp 基数内，替代散值 58）
+                start = 12.dp, end = 12.dp,
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 48.dp + 12.dp,
                 bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 14.dp,
             )
             .productShadow(RoundedCornerShape(Daylight.cardRadius))
             .clip(RoundedCornerShape(Daylight.cardRadius))
-            .background(Daylight.parchment)
-            .onSizeChanged { viewSize = it }
-            // 捏合缩放 + 放大态平移：≥2 指即入缩放（消费位移）；单指仅在 >1x 时接管平移，
-            // 1x 下全程不消费 → 外层滑卡手势不受影响。
-            // 受限手势作用域不能调挂起 snapTo：本地变量做权威计算，异步推值进 Animatable 渲染
-            //（同 scope 顺序执行保序；逐帧直读本地变量无延迟）。
-            .pointerInput(item.uri) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    tapAnimJob?.cancel()
-                    var curS = scale.value
-                    var curX = panX.value
-                    var curY = panY.value
-                    var event: PointerEvent
-                    do {
-                        event = awaitPointerEvent()
-                        val pressed = event.changes.filter { it.pressed }
-                        if (pressed.size >= 2) {
-                            val zoom = event.calculateZoom()
-                            val pan = event.calculatePan()
-                            val centroid = event.calculateCentroid()
-                            val cx0 = viewSize.width / 2f
-                            val cy0 = viewSize.height / 2f
-                            val oldS = curS
-                            curS = (curS * zoom).coerceIn(1f, 4f)
-                            val factor = if (oldS > 0f) curS / oldS else 1f
-                            // 焦点不动：centroid 在缩放前后映射到同一屏幕点，再叠加双指整体平移
-                            curX = centroid.x - cx0 - (centroid.x - cx0 - curX) * factor + pan.x
-                            curY = centroid.y - cy0 - (centroid.y - cy0 - curY) * factor + pan.y
-                            val (px, py) = clampPan(curS, curX, curY)
-                            curX = px
-                            curY = py
-                            val s2 = curS
-                            val x2 = curX
-                            val y2 = curY
-                            scope.launch {
-                                scale.snapTo(s2)
-                                panX.snapTo(x2)
-                                panY.snapTo(y2)
-                            }
-                            pressed.forEach { if (it.positionChange() != Offset.Zero) it.consume() }
-                            onZoomChange(curS > 1.01f)
-                        } else if (pressed.size == 1 && curS > 1f) {
-                            val change = pressed.first()
-                            val delta = change.positionChange()
-                            if (delta != Offset.Zero) {
-                                val (px, py) = clampPan(curS, curX + delta.x, curY + delta.y)
-                                curX = px
-                                curY = py
-                                val x2 = curX
-                                val y2 = curY
-                                scope.launch {
-                                    panX.snapTo(x2)
-                                    panY.snapTo(y2)
-                                }
-                                change.consume()
-                            }
-                        }
-                    } while (event.changes.any { it.pressed })
-                    onZoomChange(curS > 1.01f)
-                }
-            }
-            // 双击 2.5x 放大 / 还原（不消费事件，外层单击切换 chrome 语义不变——
-            // 双击序列 = 两次 onTap 相互抵消 + 一次 onDoubleTap，chrome 终态不变）
-            .pointerInput(item.uri) {
-                detectTapGestures(
-                    onDoubleTap = { pos ->
-                        haptics.tap()
-                        if (scale.value > 1.01f) {
-                            onZoomChange(false)
-                            tapAnimJob = scope.launch {
-                                launch { scale.animateTo(1f, zoomSpec) }
-                                launch { panX.animateTo(0f, zoomSpec) }
-                                panY.animateTo(0f, zoomSpec)
-                            }
-                        } else {
-                            val target = 2.5f
-                            val cx0 = viewSize.width / 2f
-                            val cy0 = viewSize.height / 2f
-                            val factor = target / scale.value
-                            // 放大后以点击点为焦点
-                            val nx = pos.x - cx0 - (pos.x - cx0 - panX.value) * factor
-                            val ny = pos.y - cy0 - (pos.y - cy0 - panY.value) * factor
-                            val (px, py) = clampPan(target, nx, ny)
-                            onZoomChange(true)
-                            tapAnimJob = scope.launch {
-                                launch { scale.animateTo(target, zoomSpec) }
-                                launch { panX.animateTo(px, zoomSpec) }
-                                panY.animateTo(py, zoomSpec)
-                            }
-                        }
-                    },
-                )
-            },
+            .background(Daylight.parchment),
     ) {
-        AsyncImage(
-            // crossfade(200) + parchment 占位（占位挂在 ImageRequest 上：
-            // AsyncImage.placeholder 只收 Painter，request.placeholder 会在 Loading 态透出），
-            // 卡面 radiusMd 裁圆；contentDescription = displayName（无障碍朗读文件名）
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(item.uri)
-                .placeholder(ColorDrawable(Daylight.parchment.toArgb()))
-                .crossfade(200)
-                .build(),
-            contentDescription = item.displayName,
-            contentScale = ContentScale.Fit,
-            imageLoader = imageLoader,
-            modifier = Modifier
-                .matchParentSize()
-                .graphicsLayer {
-                    // 惰性读取动画状态：捏合/平移逐帧不重组
-                    scaleX = scale.value
-                    scaleY = scale.value
-                    translationX = panX.value
-                    translationY = panY.value
-                }
-                .clip(RoundedCornerShape(Daylight.radiusMd)),
+        dev.sxc.kadaishan.ui.kit.ZoomableMediaImage(
+            item = item, imageLoader = imageLoader,
+            onZoomChange = onZoomChange,
+            modifier = Modifier.fillMaxSize(),
         )
         Box(
             modifier = Modifier
