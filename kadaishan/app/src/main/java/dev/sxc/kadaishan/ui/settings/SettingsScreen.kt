@@ -202,11 +202,12 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit, cultivation: de
             }
         }
 
-        // ③ 排序：单选 随机 / 大文件优先 / 最新优先 / 最早优先
+        // ③ 排序：Smart only changes image selection; the shared setting leaves videos random.
         SectionLabel("排序")
         GroupCard(Modifier.padding(horizontal = 16.dp)) {
             listOf(
                 "随机" to SortSpec.Random,
+                "智能混排" to SortSpec.Smart,
                 "大文件优先" to SortSpec.SqlOrder(SortClause.FILE_SIZE_DESC),
                 "最新优先" to SortSpec.SqlOrder(SortClause.DATE_TAKEN_DESC),
                 "最早优先" to SortSpec.SqlOrder(SortClause.DATE_TAKEN_ASC),
@@ -222,6 +223,13 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit, cultivation: de
                 )
             }
         }
+
+        Text(
+            text = "智能混排：近期截图更常出现，同一时间段连续看。仅图片生效，视频仍随机；排序更改在下一轮生效。",
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = Daylight.inkSub,
+        )
 
         // ④ 允许永久删除（PRD §4.6：默认已解锁；真实开关，落盘）
         SectionLabel("永久删除")

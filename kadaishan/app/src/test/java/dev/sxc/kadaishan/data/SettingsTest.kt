@@ -136,6 +136,8 @@ class SettingsTest {
     @Test
     fun `排序编解码往返`() {
         assertEquals("RANDOM", SettingsRepository.encodeSortStrategy(SortSpec.Random))
+        assertEquals("SMART", SettingsRepository.encodeSortStrategy(SortSpec.Smart))
+        assertEquals(SortSpec.Smart, SettingsRepository.parseSortStrategy(SettingsRepository.encodeSortStrategy(SortSpec.Smart)))
         assertEquals(
             "FILE_SIZE_DESC",
             SettingsRepository.encodeSortStrategy(SortSpec.SqlOrder(SortClause.FILE_SIZE_DESC)),

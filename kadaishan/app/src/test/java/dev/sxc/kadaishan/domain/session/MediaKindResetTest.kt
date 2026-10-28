@@ -19,6 +19,7 @@ class MediaKindResetTest {
     }
 
     private class Source : MediaSource {
+        override suspend fun selectionRows(query: MediaQuery) = emptyList<dev.sxc.kadaishan.domain.selection.SelectionRow>()
         var last: MediaQuery? = null
         var fail = false
         override suspend fun ids(query: MediaQuery): List<MediaKey> {

@@ -23,9 +23,8 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 
 /** 设置持久化（架构 §2 配置清单 4 组 key）：手势映射 / 分板块每轮数量 / 排序 / 永久删除解锁标志 + 图片板块模式。
  *  标记与分组不落盘；边界校验见伴生对象纯函数。 */
-class SettingsRepository(context: Context) {
-
-    private val dataStore: DataStore<Preferences> = context.settingsDataStore
+class SettingsRepository internal constructor(private val dataStore: DataStore<Preferences>) {
+    constructor(context: Context) : this(context.settingsDataStore)
 
     /** 手势映射；坏数据（键缺失/动作或手势非法/非双射/含 DOWN）一律回默认映射。 */
     val gestureMapping: Flow<GestureMapping> = dataStore.data.map { prefs ->
@@ -116,12 +115,14 @@ class SettingsRepository(context: Context) {
         /** 排序持久化编码："RANDOM" / SortClause 名。 */
         fun encodeSortStrategy(s: SortSpec): String = when (s) {
             SortSpec.Random -> "RANDOM"
+            SortSpec.Smart -> "SMART"
             is SortSpec.SqlOrder -> s.clause.name
         }
 
         /** 排序读取解析；缺省/坏数据 → SortSpec.Random。 */
         fun parseSortStrategy(raw: String?): SortSpec {
             if (raw == null || raw == "RANDOM") return SortSpec.Random
+            if (raw == "SMART") return SortSpec.Smart
             return try {
                 SortSpec.SqlOrder(SortClause.valueOf(raw))
             } catch (e: IllegalArgumentException) {

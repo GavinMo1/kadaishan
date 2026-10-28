@@ -116,6 +116,7 @@ fun PhotoCardScreen(
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
     cultivationRounds: dev.sxc.kadaishan.data.CultivationRoundBridge? = null,
+    onRequestPermission: () -> Unit = {},
 ) {
     // 按板块分实例：PHOTO/SCREENSHOT/SAVED 共用本屏，ViewModelStoreOwner 为 Activity 级，
     // 不带 key 会让三板块串会话（board 查询错板）；key 分实例后切板回来会话状态保留。
@@ -303,6 +304,23 @@ fun PhotoCardScreen(
     ) {
         // ① 大图 / 终态
         when {
+            vm.loadFailure != null -> Column(
+                modifier = Modifier.align(Alignment.Center).padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = if (vm.loadFailure == PhotoLoadFailure.PERMISSION) "需要重新授权才能读取照片" else "照片暂时读取失败，请重试",
+                    color = Daylight.ink,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Spacer(Modifier.height(16.dp))
+                if (vm.loadFailure == PhotoLoadFailure.PERMISSION) {
+                    PillButton(text = "重新授权", onClick = onRequestPermission)
+                    Spacer(Modifier.height(8.dp))
+                }
+                PillButton(text = "重试", onClick = vm::retryLoading)
+            }
+
             // 加载语汇统一：Spinner + 弱化文案（与视频板 / 结算面板 LoadingContent 同构；瞬态缺行只显 Spinner）
             !vm.ready -> Column(
                 modifier = Modifier.align(Alignment.Center),

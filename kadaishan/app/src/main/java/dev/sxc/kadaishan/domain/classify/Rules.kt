@@ -7,7 +7,7 @@ import dev.sxc.kadaishan.model.ImageCategory
 
 /** 路径规范化：统一分隔符（\ → /）、去首尾空白、去首尾斜杠；比较前 lowercase（大小写不敏感）。
  *  尾部斜杠差异由 trim('/') 消除——"Pictures/Screenshots" 与 "Pictures/Screenshots/" 等价。 */
-private fun normalize(raw: String): String =
+internal fun normalizeMediaPath(raw: String): String =
     raw.trim()
         .replace('\\', '/')
         .trim('/')
@@ -16,8 +16,8 @@ private fun normalize(raw: String): String =
 /** field 是否命中目录 dir：等于 dir、位于 dir 之下，或（field 不含分隔符时）等于 dir 的末段目录名——
  *  bucketName 只带末段名（如 "截屏"、"Screenshots"），仍须能命中候选集。 */
 private fun inDir(field: String, dir: String): Boolean {
-    val f = normalize(field)
-    val d = normalize(dir)
+    val f = normalizeMediaPath(field)
+    val d = normalizeMediaPath(dir)
     return f == d || f.startsWith("$d/") || ('/' !in f && d.endsWith("/$f"))
 }
 
@@ -46,7 +46,7 @@ internal object CameraRule {
     private const val NAME_PREFIX = "IMG_"
 
     fun matches(relativePath: String, displayName: String): Boolean =
-        normalize(relativePath) == normalize(DIRECTORY) || displayName.startsWith(NAME_PREFIX)
+        normalizeMediaPath(relativePath) == normalizeMediaPath(DIRECTORY) || displayName.startsWith(NAME_PREFIX)
 }
 
 /** 三分类纯函数（顺序链：截图 → 相机 → 兜底 SAVED），纯 JVM，单测不触碰 android.*。 */

@@ -16,7 +16,7 @@ fun SortSpec.toOrderBy(): String = when (this) {
         SortClause.DATE_TAKEN_DESC -> "$DATE_TAKEN_EXPR DESC"
         SortClause.DATE_TAKEN_ASC -> "$DATE_TAKEN_EXPR ASC"
     }
-    SortSpec.Random -> "_ID ASC"
+    SortSpec.Random, SortSpec.Smart -> "_ID ASC"
 }
 
 /** 纯 Fisher-Yates 洗牌（架构 §8 可测性口径：Random 构造注入，不为测试新增接口）。

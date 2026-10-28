@@ -447,6 +447,7 @@ private fun MainContent(
                         onToggleChrome = onToggleChrome,
                         onInteract = onInteract,
                         cultivationRounds = container.cultivationRounds,
+                        onRequestPermission = onGrantAll,
                     )
                 }
 

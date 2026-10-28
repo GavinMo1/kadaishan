@@ -35,6 +35,7 @@ class SortTest {
     @Test
     fun `Random maps to stable _ID ASC`() {
         assertEquals("_ID ASC", SortSpec.Random.toOrderBy())
+        assertEquals("_ID ASC", SortSpec.Smart.toOrderBy())
     }
 
     @Test

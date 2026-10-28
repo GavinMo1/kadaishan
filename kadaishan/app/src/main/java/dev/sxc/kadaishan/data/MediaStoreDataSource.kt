@@ -9,6 +9,8 @@ import android.provider.MediaStore
 import dev.sxc.kadaishan.domain.ImageClassifier
 import dev.sxc.kadaishan.domain.MediaSource
 import dev.sxc.kadaishan.domain.classify.classifyFields
+import dev.sxc.kadaishan.domain.selection.SelectionRow
+import dev.sxc.kadaishan.domain.selection.selectionOrigin
 import dev.sxc.kadaishan.domain.sort.toOrderBy
 import dev.sxc.kadaishan.model.Board
 import dev.sxc.kadaishan.model.ImageCategory
@@ -19,6 +21,11 @@ import dev.sxc.kadaishan.model.Page
 import dev.sxc.kadaishan.model.SortSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 
 // ═══ MediaStore 单一数据层（架构 §0 数据层收口；§7 分页 = limit+offset，≤3000 条规模）═══
 
@@ -45,6 +52,11 @@ private val ID_PROJECTION = arrayOf(
     MediaStore.MediaColumns.DISPLAY_NAME,
 )
 
+private val SELECTION_PROJECTION = ID_PROJECTION + arrayOf(
+    MediaStore.MediaColumns.DATE_TAKEN,
+    MediaStore.MediaColumns.DATE_ADDED,
+)
+
 /** 图片/视频两个视图：_ID 互斥（media_type 单值），queryByIds 双集合查全不重。 */
 private val ALL_COLLECTIONS = arrayOf(
     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -55,6 +67,48 @@ class MediaStoreDataSource(
     private val resolver: ContentResolver,
     private val classifier: ImageClassifier,
 ) : MediaSource {
+
+    override suspend fun selectionRows(query: MediaQuery): List<SelectionRow> = withContext(Dispatchers.IO) {
+        require(query.board != dev.sxc.kadaishan.model.Board.VIDEO) { "Smart selection is images only" }
+        val context = currentCoroutineContext()
+        context.ensureActive()
+        // Pass a platform signal as well as checking rows, so cancellation can interrupt provider I/O.
+        val signal = android.os.CancellationSignal()
+        val watcher = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { signal.cancel() }
+        }
+        try {
+            val cursor = resolver.query(collectionFor(query.board), SELECTION_PROJECTION,
+                queryArgs(query.matchTrashed, sortOrder = "_ID ASC"), signal)
+                ?: throw java.io.IOException("MediaStore returned no cursor")
+            cursor.use { c ->
+                val idIndex = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val pathIndex = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+                val bucketIndex = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+                val nameIndex = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                val takenIndex = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+                val addedIndex = c.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED)
+                fun str(i: Int) = if (i < 0 || c.isNull(i)) "" else c.getString(i).orEmpty()
+                val target = imageTarget(query)
+                val result = ArrayList<SelectionRow>()
+                while (c.moveToNext()) {
+                    context.ensureActive()
+                    val path = str(pathIndex)
+                    val bucket = str(bucketIndex)
+                    val category = classifyFields(path, bucket, str(nameIndex))
+                    if (target == null || category == target) result.add(SelectionRow(
+                        c.getLong(idIndex), category, selectionOrigin(path, bucket, category),
+                        if (takenIndex < 0 || c.isNull(takenIndex)) null else c.getLong(takenIndex),
+                        if (addedIndex < 0 || c.isNull(addedIndex)) 0 else c.getLong(addedIndex),
+                    ))
+                }
+                context.ensureActive()
+                result
+            }
+        } finally {
+            watcher.cancel()
+        }
+    }
 
     override suspend fun page(query: MediaQuery, after: MediaKey?, limit: Int): Page<MediaItem> =
         withContext(Dispatchers.IO) {
@@ -103,14 +157,7 @@ class MediaStoreDataSource(
                 val idIndex = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 // 板块内过滤（编排者裁决 2026-09-27）：图片三板逐行走 classifyFields；
                 // VIDEO 集合天然全视频（media_type=VIDEO），target=null 短路、无谓词
-                val target = when {
-                    // 统一图片板块（PRD §3.1）：全部图片入池，分类规则降级为筛选器
-                    query.mergeImages -> null
-                    query.board == Board.PHOTO -> ImageCategory.CAMERA
-                    query.board == Board.SCREENSHOT -> ImageCategory.SCREENSHOT
-                    query.board == Board.SAVED -> ImageCategory.SAVED
-                    else -> null
-                }
+                val target = imageTarget(query)
                 val pathIndex = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
                 val bucketIndex = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
                 val nameIndex = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
@@ -132,6 +179,15 @@ class MediaStoreDataSource(
         Board.SCREENSHOT -> { item -> classifier.classify(item) == ImageCategory.SCREENSHOT }
         Board.SAVED -> { item -> classifier.classify(item) == ImageCategory.SAVED }
     }
+}
+
+/** Shared by ids and Smart: category filters must not drift between ordering strategies. */
+internal fun imageTarget(query: MediaQuery): ImageCategory? = when {
+    query.board == dev.sxc.kadaishan.model.Board.VIDEO -> null
+    query.mergeImages -> null
+    query.board == dev.sxc.kadaishan.model.Board.PHOTO -> ImageCategory.CAMERA
+    query.board == dev.sxc.kadaishan.model.Board.SCREENSHOT -> ImageCategory.SCREENSHOT
+    else -> ImageCategory.SAVED
 }
 
 /** 窗口收集（真实调用方 = page 的 cursor 行序列；架构 §7 limit+offset）。

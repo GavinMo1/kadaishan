@@ -49,6 +49,7 @@ class SessionControllerTest {
 
     /** fake：ids 返回固定池，记录最后一次 query 以断言查询构造。 */
     private class FakeSource(private val pool: List<MediaKey>) : MediaSource {
+        override suspend fun selectionRows(query: MediaQuery) = emptyList<dev.sxc.kadaishan.domain.selection.SelectionRow>()
         var lastQuery: MediaQuery? = null
 
         override suspend fun page(query: MediaQuery, after: MediaKey?, limit: Int): Page<MediaItem> =

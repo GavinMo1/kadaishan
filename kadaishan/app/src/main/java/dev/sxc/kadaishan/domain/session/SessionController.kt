@@ -8,6 +8,12 @@ import dev.sxc.kadaishan.model.MediaQuery
 import dev.sxc.kadaishan.model.SortSpec
 import dev.sxc.kadaishan.model.VisibleScope
 import kotlin.random.Random
+import dev.sxc.kadaishan.domain.selection.smartOrder
+import java.time.ZoneId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 // ═══ 会话生命周期控制器（图片/视频两个卡片 VM 的共享层；架构 §2 BoardSession 的持有与轮界决策）═══
 //
@@ -35,6 +41,8 @@ class SessionController(
     private val random: Random = Random.Default,
     private val history: ReviewHistory? = null,
     private val diagnostic: (String) -> Unit = {},
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) {
 
     var session: BoardSession? = null
@@ -54,13 +62,24 @@ class SessionController(
     }
 
     /** 构造新会话（初始进入 / 设置变更 / 池尽重扫共用）：ids 快照 + Random 时 fisherYates。 */
-    suspend fun rebuild(roundSize: Int): BoardSession {
+    suspend fun rebuild(roundSize: Int, latestRoundSize: () -> Int = { roundSize }): BoardSession {
+        val now = clock()
+        val timeZone = zone()
         val kept = history?.keptIds().orEmpty()
-        val candidates = source.ids(query())
-        var order = candidates.filterNot { it in kept }
-        diagnostic("rebuild board=$board candidates=${candidates.size} kept=${kept.size} excluded=${candidates.size - order.size} first=${order.take(5)}")
-        if (sort == SortSpec.Random) order = fisherYates(order, random)
-        val s = BoardSession(order, roundSize)
+        val order = if (sort == SortSpec.Smart && board != Board.VIDEO) {
+            val rows = source.selectionRows(query())
+            withContext(Dispatchers.Default) {
+                val context = currentCoroutineContext()
+                smartOrder(rows.filterNot { context.ensureActive(); it.id in kept }, now, timeZone, random) { context.ensureActive() }
+            }
+        } else {
+            val effectiveQuery = query().let { if (it.sort == SortSpec.Smart) it.copy(sort = SortSpec.Random) else it }
+            val candidates = source.ids(effectiveQuery).filterNot { it in kept }
+            if (effectiveQuery.sort == SortSpec.Random) fisherYates(candidates, random) else candidates
+        }
+        currentCoroutineContext().ensureActive()
+        diagnostic("rebuild board=$board kept=${kept.size} candidates=${order.size} first=${order.take(5)}")
+        val s = BoardSession(order, latestRoundSize())
         session = s
         return s
     }

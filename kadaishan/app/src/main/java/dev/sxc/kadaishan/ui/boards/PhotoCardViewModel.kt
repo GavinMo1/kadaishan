@@ -17,6 +17,9 @@ import dev.sxc.kadaishan.model.BoardAction
 import dev.sxc.kadaishan.model.MediaItem
 import dev.sxc.kadaishan.model.MediaKey
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -33,6 +36,8 @@ import kotlinx.coroutines.launch
 //  · 会话生命周期（构建/轮界决策/设置变更判定）= SessionController 单一来源（与视频板共享）；
 //    每轮数量走热生效通道（init 起 live collect → session.updateRoundSize，当前轮立即按新值收尾）。
 // main 单写者（架构 §2 并发约定）；会话与标记只存内存；保留记录委托 ReviewHistory 持久化。
+
+internal enum class PhotoLoadFailure { PERMISSION, READ }
 
 class PhotoCardViewModel(
     private val board: Board,
@@ -51,6 +56,34 @@ class PhotoCardViewModel(
         private set
 
     fun dismissActionError() { actionError = null }
+
+    internal var loadFailure by mutableStateOf<PhotoLoadFailure?>(null)
+        private set
+    private var loadingJob: Job? = null
+
+    /** One owner for initial loading, next-round rebuild and retry. Never turn failure into empty. */
+    private fun launchLoad(block: suspend () -> Unit) {
+        if (loadingJob?.isActive == true) return
+        ready = false
+        loadFailure = null
+        loadingJob = viewModelScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                currentCoroutineContext().ensureActive()
+                currentId = null
+                ready = false
+                loadFailure = if (e is SecurityException) PhotoLoadFailure.PERMISSION else PhotoLoadFailure.READ
+            }
+        }
+    }
+
+    fun retryLoading() {
+        if (loadFailure == null) return
+        launchLoad { applyRoundSettings(); rebuild() }
+    }
 
     private fun persistThen(commit: suspend () -> Unit, apply: () -> Unit) {
         if (!ready || !durableAction.begin()) return
@@ -105,7 +138,7 @@ class PhotoCardViewModel(
     private val session get() = controller.session
 
     init {
-        viewModelScope.launch {
+        launchLoad {
             // 先取落盘配置再建会话（每轮数量 / 排序 / 板块模式）
             applyRoundSettings()
             rebuild()
@@ -132,7 +165,7 @@ class PhotoCardViewModel(
     private fun applyRoundSize(size: Int) {
         currentRoundSize = size
         session?.updateRoundSize(size)
-        refresh()
+        if (ready) refresh()
     }
 
     /** 轮初重读落盘设置（排序/板块模式；M11：改排序/模式无需杀进程，下一轮生效）。
@@ -202,7 +235,7 @@ class PhotoCardViewModel(
         cultivationRounds?.complete(cultivationRound, s.hasRoundDecision())
         cultivationRound = cultivationRounds?.begin()
         ready = false // 过渡期按加载态渲染，盖住轮末/池尽残影
-        viewModelScope.launch {
+        launchLoad {
             when (controller.decideNextRound(applyRoundSettings())) {
                 RoundAdvance.START_NEW_ROUND -> {
                     s.startNewRound(preserveUndo = preserveUndo && s.markedCount == 0)
@@ -223,17 +256,18 @@ class PhotoCardViewModel(
 
     fun reviewKeptAgain() {
         if (!ready || durableAction.busy || currentId != null || markedCount > 0) return
-        ready = false
-        viewModelScope.launch {
+        launchLoad {
             try {
                 controller.resetKeptForMediaKind()
-                rebuild()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (e is SecurityException) throw e
                 ready = true
                 actionError = "保留记录未能重置，请重试"
+                return@launchLoad
             }
+            rebuild()
         }
     }
 
@@ -247,7 +281,9 @@ class PhotoCardViewModel(
     private suspend fun rebuild() {
         ready = false
         currentId = null
-        controller.rebuild(currentRoundSize)
+        val built = controller.rebuild(currentRoundSize) { currentRoundSize }
+        currentCoroutineContext().ensureActive()
+        built.updateRoundSize(currentRoundSize)
         refresh()
         ready = true
     }

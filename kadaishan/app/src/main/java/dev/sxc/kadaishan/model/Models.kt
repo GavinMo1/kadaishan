@@ -44,6 +44,7 @@ enum class ImageCategory { SCREENSHOT, CAMERA, SAVED }
 sealed interface SortSpec {
     data class SqlOrder(val clause: SortClause) : SortSpec
     data object Random : SortSpec
+    data object Smart : SortSpec
 }
 
 enum class SortClause { FILE_SIZE_DESC, DATE_TAKEN_DESC, DATE_TAKEN_ASC }
