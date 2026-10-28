@@ -70,7 +70,7 @@ import kotlin.math.roundToInt
  *  Flow 经 collectAsState 汇入，改动立即走 setter；手势冲突在构造校验处拒绝、行内红字不落盘。
  *  子页自管 insets（顶 = 状态栏，底 = 手势条）。 */
 @Composable
-fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit) {
+fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit, cultivation: dev.sxc.kadaishan.data.CultivationRepository? = null, onCultivation: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
 
@@ -95,6 +95,24 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit) {
             .verticalScroll(rememberScrollState()),
     ) {
         NavTitleBar(title = "设置", onBack = onBack)
+        if (cultivation != null) {
+            val game by cultivation.state.collectAsState()
+            val gameError by cultivation.error.collectAsState()
+            androidx.compose.runtime.LaunchedEffect(cultivation) { cultivation.refresh() }
+            SectionLabel("小游戏")
+            GroupCard(Modifier.padding(horizontal = 16.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("显示修仙", modifier = Modifier.weight(1f), color = Daylight.ink)
+                        Switch(checked = game?.enabled ?: true, onCheckedChange = { value -> scope.launch { cultivation.setEnabled(value) } })
+                    }
+                    Text("挂机修炼、打怪掉装、转世传承。离线收益无上限。", color = Daylight.inkSub, style = MaterialTheme.typography.bodyMedium)
+                    if (game?.enabled == true || gameError != null) {
+                        androidx.compose.material3.TextButton(onClick = onCultivation) { Text(if (gameError != null) "查看修仙存档问题" else "进入掌中修仙") }
+                    }
+                }
+            }
+        }
 
         // ① 手势映射（图片板块）：左/右/上各一行，点按 = 与当前持有目标动作的另一手势交换（保持双射）
         SectionLabel("手势映射 · 图片板块")

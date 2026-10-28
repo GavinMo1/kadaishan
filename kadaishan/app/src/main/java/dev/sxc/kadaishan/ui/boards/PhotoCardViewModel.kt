@@ -39,7 +39,12 @@ class PhotoCardViewModel(
     private val source: MediaSource,
     private val settings: SettingsRepository,
     private val history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    private val cultivationRounds: dev.sxc.kadaishan.data.CultivationRoundBridge? = null,
 ) : ViewModel() {
+    private var cultivationRound = cultivationRounds?.begin()
+    fun completeCultivationRound() {
+        if (ready && currentId == null) cultivationRounds?.complete(cultivationRound, session?.hasRoundDecision() == true)
+    }
 
     private val durableAction = dev.sxc.kadaishan.domain.session.DurableReviewAction()
     var actionError by mutableStateOf<String?>(null)
@@ -194,6 +199,8 @@ class PhotoCardViewModel(
     fun startNextRound(preserveUndo: Boolean = false) {
         val s = session ?: return
         if (!ready || durableAction.busy) return
+        cultivationRounds?.complete(cultivationRound, s.hasRoundDecision())
+        cultivationRound = cultivationRounds?.begin()
         ready = false // 过渡期按加载态渲染，盖住轮末/池尽残影
         viewModelScope.launch {
             when (controller.decideNextRound(applyRoundSettings())) {

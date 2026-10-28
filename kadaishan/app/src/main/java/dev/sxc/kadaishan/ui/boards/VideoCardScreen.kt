@@ -123,11 +123,12 @@ fun VideoCardScreen(
     onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
+    cultivationRounds: dev.sxc.kadaishan.data.CultivationRoundBridge? = null,
 ) {
     val context = LocalContext.current
     val vm: VideoCardViewModel = viewModel(
         factory = viewModelFactory {
-            initializer { VideoCardViewModel(source, settings, context.applicationContext, history) }
+            initializer { VideoCardViewModel(source, settings, context.applicationContext, history, cultivationRounds) }
         },
     )
     val imageLoader = remember(context) {
@@ -164,6 +165,7 @@ fun VideoCardScreen(
     // M4：轮末自动弹结算（含 0 标记 → 面板空态「本轮无删除项」）；面板关闭后轮末屏留「查看结算」重入口
     LaunchedEffect(vm.ready, vm.roundEnded, vm.currentId) {
         if (vm.ready && vm.currentId == null) {
+            vm.completeCultivationRound()
             if (vm.markedCount > 0) settlementOpen = true
             else if (vm.roundEnded) vm.startNextRound()
         }

@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
         dev.sxc.kadaishan.data.ReviewDiagnostics.record(
             "installed version=${installed.versionName} code=${installed.longVersionCode} updated=${installed.lastUpdateTime}"
         )
-        val container = AppContainer(applicationContext)
+        val container = AppContainer.get(applicationContext)
         setContent {
             AppTheme {
                 AppRoot(container, gestureHints)
@@ -162,6 +162,10 @@ private tailrec fun Context.findActivity(): ComponentActivity? = when (this) {
 @Composable
 fun AppRoot(container: AppContainer, gestureHints: GestureHintViewModel) {
     val context = LocalContext.current
+    var deniedGame by rememberSaveable { mutableStateOf(false) }
+    var deniedSettings by rememberSaveable { mutableStateOf(false) }
+    val cultivationState by container.cultivation.state.collectAsState()
+    LaunchedEffect(container) { container.cultivation.refresh() }
     var scope by remember { mutableStateOf(context.mediaScope()) }
 
     // 权限状态不缓存：ON_RESUME 重查（PRD §5.4；含从系统设置页/权限弹窗返回）
@@ -219,11 +223,18 @@ fun AppRoot(container: AppContainer, gestureHints: GestureHintViewModel) {
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             when (scope) {
-                VisibleScope.DENIED -> DeniedGuide(
+                VisibleScope.DENIED -> if (deniedSettings && !deniedGame) {
+                    BackHandler { deniedSettings = false }
+                    SettingsScreen(container.settings, onBack = { deniedSettings = false }, cultivation = container.cultivation, onCultivation = { deniedGame = true })
+                } else if (deniedGame) {
+                    dev.sxc.kadaishan.ui.cultivation.CultivationScreen(container.cultivation, onBack = { deniedGame = false })
+                } else DeniedGuide(
                     onGrant = {
                         settingsFallback = false
                         permissionLauncher.launch(ALL_MEDIA_PERMISSIONS)
                     },
+                    onCultivation = if (cultivationState?.enabled != false) ({ deniedGame = true }) else null,
+                    onSettings = { deniedSettings = true },
                 )
 
                 else -> MainContent(
@@ -263,7 +274,7 @@ fun AppRoot(container: AppContainer, gestureHints: GestureHintViewModel) {
 
 /** DENIED：全屏开版式引导：图形锚点（叠卡意象）+ 主张句 + 权限说明 + 蓝色药丸 CTA；spatial 入场。 */
 @Composable
-private fun DeniedGuide(onGrant: () -> Unit) {
+private fun DeniedGuide(onGrant: () -> Unit, onCultivation: (() -> Unit)?, onSettings: () -> Unit) {
     val reduced = rememberReducedMotion()
     val enter = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(Unit) { enter.animateTo(1f, if (reduced) snap() else Daylight.spatial()) }
@@ -318,6 +329,8 @@ private fun DeniedGuide(onGrant: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(32.dp))
         PillButton(text = "去授权", onClick = onGrant, modifier = Modifier.fillMaxWidth())
+        if (onCultivation != null) androidx.compose.material3.TextButton(onClick = onCultivation) { Text("先去修仙 · 无需相册权限") }
+        androidx.compose.material3.TextButton(onClick = onSettings) { Text("设置") }
     }
 }
 
@@ -334,6 +347,7 @@ private fun MainContent(
     val board = Board.valueOf(boardName)
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showTrash by rememberSaveable { mutableStateOf(false) }
+    var showCultivation by rememberSaveable { mutableStateOf(false) }
     val imageBoardsMerged by container.settings.imageBoardsMerged.collectAsState(initial = true)
     // 统一图片板块（PRD §3.1）：分板遗留的截图/已保存选中态归位「照片」
     LaunchedEffect(imageBoardsMerged, boardName) {
@@ -342,8 +356,8 @@ private fun MainContent(
 
     // 系统栏随页面动态配色（P0-2）：视频板黑底沉浸 → 浅色图标；其余页面 → 深色图标
     val activity = LocalContext.current.findActivity()
-    LaunchedEffect(board, showSettings, showTrash) {
-        val onVideoBoard = board == Board.VIDEO && !showSettings && !showTrash
+    LaunchedEffect(board, showSettings, showTrash, showCultivation) {
+        val onVideoBoard = board == Board.VIDEO && !showSettings && !showTrash && !showCultivation
         activity?.enableEdgeToEdge(
             statusBarStyle = if (onVideoBoard) {
                 SystemBarStyle.dark(android.graphics.Color.BLACK)
@@ -362,6 +376,7 @@ private fun MainContent(
     val reducedMotion = rememberReducedMotion()
     // 页面键：子页（设置/回收站）与板块页三分支；板块内切换不触发转场
     val page = when {
+        showCultivation -> "cultivation"
         showTrash -> "trash"
         showSettings -> "settings"
         else -> "board"
@@ -386,13 +401,14 @@ private fun MainContent(
         label = "page-nav",
     ) { target ->
         when (target) {
+            "cultivation" -> dev.sxc.kadaishan.ui.cultivation.CultivationScreen(container.cultivation, onBack = { showCultivation = false })
             "trash" -> {
                 BackHandler { showTrash = false }
                 TrashScreen(container.mediaDeleter, onBack = { showTrash = false })
             }
             "settings" -> {
                 BackHandler { showSettings = false }
-                SettingsScreen(container.settings, onBack = { showSettings = false })
+                SettingsScreen(container.settings, onBack = { showSettings = false }, cultivation = container.cultivation, onCultivation = { showCultivation = true })
             }
             else -> Box(modifier = Modifier.fillMaxSize()) {
                 // 内容全幅（查看器式）：子页/板块自管 insets——视频板黑色满屏沉浸，图片板白画布自留顶部余量。
@@ -414,6 +430,7 @@ private fun MainContent(
                         onOpenTrash = { showTrash = true },
                         onToggleChrome = onToggleChrome,
                         onInteract = onInteract,
+                        cultivationRounds = container.cultivationRounds,
                     )
                 } else {
                     PhotoCardScreen(
@@ -429,6 +446,7 @@ private fun MainContent(
                         onOpenTrash = { showTrash = true },
                         onToggleChrome = onToggleChrome,
                         onInteract = onInteract,
+                        cultivationRounds = container.cultivationRounds,
                     )
                 }
 

@@ -61,6 +61,13 @@ class BoardSession(idOrder: List<MediaKey>, roundSize: Int) {
     private val kept = LinkedHashSet<MediaKey>()
     val keptIds: Set<MediaKey> get() = kept.toSet()
 
+    /** Video previews have already advanced; record an explicit keep without advancing again. */
+    fun keepDisplayed(id: MediaKey) {
+        if (displayedIndex(id) >= 0) kept.add(id)
+    }
+
+    fun hasRoundDecision(): Boolean = marks.isNotEmpty() || order.subList(roundStart, pointer).any { it in kept }
+
     /** 当前应展示项；null = 轮末（roundEnded()）或池已穷尽（含空会话）。
      *  轮末主动置 null：不泄漏本轮之外的下一条、不留可滑僵尸卡；调用方据 roundEnded() 分辨两种 null。 */
     val current: MediaKey?

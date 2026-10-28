@@ -115,13 +115,14 @@ fun PhotoCardScreen(
     onOpenTrash: () -> Unit = {},
     onToggleChrome: () -> Unit = {},
     onInteract: () -> Unit = {},
+    cultivationRounds: dev.sxc.kadaishan.data.CultivationRoundBridge? = null,
 ) {
     // 按板块分实例：PHOTO/SCREENSHOT/SAVED 共用本屏，ViewModelStoreOwner 为 Activity 级，
     // 不带 key 会让三板块串会话（board 查询错板）；key 分实例后切板回来会话状态保留。
     val vm: PhotoCardViewModel = viewModel(
         key = "photo-card:${board.name}",
         factory = viewModelFactory {
-            initializer { PhotoCardViewModel(board, source, settings, history) }
+            initializer { PhotoCardViewModel(board, source, settings, history, cultivationRounds) }
         },
     )
 
@@ -180,6 +181,7 @@ fun PhotoCardScreen(
     // 零删除轮不中断浏览；依赖 ready 防止重建过程被误判为池尽。
     LaunchedEffect(vm.ready, vm.roundEnded, vm.currentId) {
         if (vm.ready && vm.currentId == null) {
+            vm.completeCultivationRound()
             if (vm.markedCount > 0) settlementOpen = true
             else if (vm.roundEnded) vm.startNextRound(preserveUndo = true)
         }

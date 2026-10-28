@@ -46,7 +46,12 @@ class VideoCardViewModel(
     private val settings: SettingsRepository,
     context: Context, // 仅取 applicationContext（防 Activity 泄漏）
     private val history: dev.sxc.kadaishan.domain.session.ReviewHistory,
+    private val cultivationRounds: dev.sxc.kadaishan.data.CultivationRoundBridge? = null,
 ) : ViewModel() {
+    private var cultivationRound = cultivationRounds?.begin()
+    fun completeCultivationRound() {
+        if (ready && currentId == null) cultivationRounds?.complete(cultivationRound, session?.hasRoundDecision() == true)
+    }
 
     /** 自动跳后 Snackbar 事件（seq 保证同值可重复触发；撤回 = unmark(id)）。 */
     data class SnackEvent(val seq: Int, val count: Int, val id: MediaKey)
@@ -312,7 +317,10 @@ class VideoCardViewModel(
     fun next() {
         if (!ready || durableAction.busy) return
         val id = currentId ?: return
-        persistThen({ if (id !in markedIds) history.setKept(setOf(id), true) }) { nextStep() }
+        persistThen({ if (id !in markedIds) history.setKept(setOf(id), true) }) {
+            if (id !in markedIds) session?.keepDisplayed(id)
+            nextStep()
+        }
     }
 
     /** 下滑 = 上一个（到头无效；回看不碰 session）。 */
@@ -388,6 +396,8 @@ class VideoCardViewModel(
      *  （须在 startNewRound 之前判定）；排序变更在此轮界生效（每轮数量已热生效，不参与重建判定）。 */
     fun startNextRound() {
         if (!ready || durableAction.busy) return
+        cultivationRounds?.complete(cultivationRound, session?.hasRoundDecision() == true)
+        cultivationRound = cultivationRounds?.begin()
         ready = false
         val s = session
         viewModelScope.launch {
