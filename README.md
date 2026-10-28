@@ -12,6 +12,10 @@
 
 APK：`kadaishan/app/build/outputs/apk/debug/app-debug.apk`。
 
+## 当前开发入口
+
+修仙功能位于 [`codex/cultivation`](https://github.com/GavinMo1/kadaishan/tree/codex/cultivation)，已推送，尚未合入 `main`；继续开发前先检查当前分支。基本功能的用户反馈、画面待改进项与验证边界统一见[开发说明](docs/掌中修仙开发说明.md)。
+
 ## 掌中修仙
 
 设置中进入修仙；未授权相册时也可独立进入。包含挂机修炼、自动打怪、随机掉装、突破、装备位强化与转世传承。离线收益无时长上限、不衰减，无付费、广告、签到或后台服务。
