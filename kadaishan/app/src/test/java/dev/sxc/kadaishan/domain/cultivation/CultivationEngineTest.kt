@@ -4,7 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CultivationEngineTest {
-    private fun fresh(seed: Long = 42) = CultivationState(lastMillis = 0, seed = seed)
+    private fun fresh(seed: Long = 42) = CultivationState(version = 1, lastMillis = 0, seed = seed)
     private fun catch(s: CultivationState, now: Long): CultivationState {
         var r = s
         do { r = CultivationEngine.catchUp(r, now) } while (CultivationEngine.pending(r, now) > 0)
