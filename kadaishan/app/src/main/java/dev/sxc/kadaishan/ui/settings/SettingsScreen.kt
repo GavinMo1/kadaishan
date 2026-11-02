@@ -95,6 +95,9 @@ fun SettingsScreen(repo: SettingsRepository, onBack: () -> Unit, cultivation: de
             .verticalScroll(rememberScrollState()),
     ) {
         NavTitleBar(title = "设置", onBack = onBack)
+        Text("卡待删 ${dev.sxc.kadaishan.BuildConfig.VERSION_NAME}（${dev.sxc.kadaishan.BuildConfig.VERSION_CODE}）",
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            color = Daylight.inkSub, style = MaterialTheme.typography.bodySmall)
         if (cultivation != null) {
             val game by cultivation.state.collectAsState()
             val gameError by cultivation.error.collectAsState()

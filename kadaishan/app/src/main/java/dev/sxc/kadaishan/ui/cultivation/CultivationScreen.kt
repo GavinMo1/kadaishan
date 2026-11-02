@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -58,7 +59,7 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
             }
         }
         val s = state
-        if (s == null) {
+        if (s == null || s.version < 3) {
             Text("正在读取修仙存档…", modifier = Modifier.padding(24.dp), color = Daylight.inkSub)
         } else {
             val stats = CultivationEngine.stats(s)
@@ -76,7 +77,8 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                 Text(if (s.paused) "恢复后继续，暂停期间不积累收益" else if (canWin) "${battleSummary(CultivationEngine.battle(s))}\n预计修为 ${CultivationEngine.hourlyCultivationTenths(s) / 10}/小时 · 灵石 ${CultivationEngine.hourlyStones(s)}/小时" else "暂时打不过普通怪，仍积累修为；可回到旧图刷装", color = Daylight.inkSub, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(16.dp))
                 val next = CultivationEngine.nextCost(s.level)
-                Text("修为 ${s.cultivationTenths / 10}${if (s.level < 18) " / $next" else " · 本世圆满"}    灵石 ${s.stones}", color = Daylight.ink)
+                Text("修为 ${xpText(s.cultivationTenths)}${if (s.level < 18) " / $next" else " · 本世圆满"}    灵石 ${s.stones}", color = Daylight.ink)
+                Text("每小时基础 ${xpText(CultivationEngine.hourlyBaseCultivation(s))} + 击杀 ${xpText((CultivationEngine.hourlyCultivationTenths(s) - CultivationEngine.hourlyBaseCultivation(s)).coerceAtLeast(0))} 修为（当前配置预测）", color = Daylight.inkSub, style = MaterialTheme.typography.bodySmall)
                 if (s.level < 18) LinearProgressIndicator(progress = { (s.cultivationTenths.toDouble() / 10 / next).coerceIn(0.0, 1.0).toFloat() }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                     Button(onClick = { scope.launch { repo.update { CultivationEngine.breakthrough(it, true) } } }, enabled = !busy && s.level < 18 && s.cultivationTenths / 10 >= next && (s.level != 9 || 3 in s.bosses)) { Text("突破境界") }
@@ -84,6 +86,7 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                 }
                 if (s.level == 9 && 3 !in s.bosses) Text("筑基需先击败迷雾泽地守关妖兽", color = Daylight.inkSub)
             }
+            RefinementPanel(s, repo, busy) { feedback = it }
             if (s.report.minutes > 0) {
                 SectionLabel("历练收获 · 已全部到账")
                 GroupCard(Modifier.padding(horizontal = 16.dp)) {
@@ -94,14 +97,17 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                         Text("尝试 ${s.report.battles} 场 · 失败 ${s.report.battles - s.report.wins} 场", color = Daylight.inkSub)
                         if (s.report.minutes == Long.MAX_VALUE) Text("报告计数已达上限，后续收益仍会结算", color = Daylight.inkSub)
                         Text("修为 +${s.report.cultivationTenths / 10} · 灵石 +${s.report.stones}", color = Daylight.inkSub)
+                        Text("基础 ${xpText(s.report.baseCultivation)} · 击杀 ${xpText(s.report.killCultivation)} · 旧规则 ${xpText(s.report.legacyCultivation)} 修为", color = Daylight.inkSub)
+                        Text("功法掉落 ${s.report.manualDrops} 份 · 重复转心得 ${s.report.insightDrops}", color = Daylight.inkSub)
+                        if (s.report.newManuals.isNotEmpty()) Text("新领悟：${s.report.newManuals.sortedBy { it.ordinal }.joinToString { it.label }}", color = Daylight.primary)
                         Text("掉落 ${s.report.drops} 件 · 自动化解 ${s.report.dissolved} 件", color = Daylight.inkSub)
                         if (s.report.bestQuality >= 0) Text("最高 ${Quality.entries[s.report.bestQuality].label}装 · 留存装备见装备页", color = qualityColor(Quality.entries[s.report.bestQuality]))
                         TextButton(onClick = { scope.launch { repo.clearReport() } }, enabled = !busy) { Text("收起报告") }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("历练", "装备", "历世").forEachIndexed { index, label -> FilterChip(selected = tab == index, onClick = { tab = index }, label = { Text(label) }) }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("历练", "装备", "功法", "历世").forEachIndexed { index, label -> FilterChip(selected = tab == index, onClick = { tab = index }, label = { Text(label) }) }
             }
             when (tab) {
                 0 -> {
@@ -126,11 +132,6 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                             } }, enabled = !busy && s.level >= s.map * 3) { Text(if (s.map in s.bosses) "守关试招" else "挑战守关妖兽") }
                         }
                     }
-                    SectionLabel("功法 · 免费切换")
-                    Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Practice.entries.forEach { p -> FilterChip(selected = s.practice == p, onClick = { scope.launch { repo.update { it.copy(practice = p) }?.let { feedback = comparison(it.first, it.second) } } }, enabled = !busy, label = { Text(p.label) }) }
-                    }
-                    Text("御剑：第三回合双倍伤害\n长生：每次攻击前回复 12% 最大生命", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Daylight.inkSub)
                 }
                 1 -> {
                     Text("每位置保留三件候选，超出自动化为灵石；穿戴与传承件受保护。换装继承该装备位的强化。", modifier = Modifier.padding(horizontal = 20.dp), color = Daylight.inkSub, style = MaterialTheme.typography.bodyMedium)
@@ -156,7 +157,8 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                         }
                     }
                 }
-                2 -> {
+                2 -> ManualPanel(s, repo, busy) { feedback = it }
+                3 -> {
                     SectionLabel("轮回与传承")
                     GroupCard(Modifier.padding(horizontal = 16.dp)) {
                         Column(Modifier.padding(16.dp)) {
@@ -164,7 +166,7 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
                             Text("根骨 +${CultivationEngine.multiply(s.reincarnations, 5)}% · 悟性 +${CultivationEngine.multiply(s.reincarnations, 10)}%", color = Daylight.primary)
                             Text("历世最高：${if (s.highestLevel <= 9) "炼气${s.highestLevel}层" else "筑基${s.highestLevel - 9}层"} · 已发现 ${s.collection.size} 种装备", color = Daylight.inkSub)
                             Spacer(Modifier.height(12.dp))
-                            Text("本世筑基九层并通关雷云峰后可转世。继承一件装备与 10% 灵石，永久增加 5% 基础属性与 10% 修为收益；境界、修为、地图、强化及其余装备重置。", color = Daylight.inkSub)
+                            Text("本世筑基九层并通关雷云峰后可转世。功法、等级、心得及功法保底全部保留，继承一件装备与 10% 灵石，永久增加 5% 基础属性与 10% 修为收益；境界、修为、地图、强化及其余装备重置。", color = Daylight.inkSub)
                             Button(onClick = { scope.launch { repo.refresh(); rebirthPreview = repo.state.value; selectedHeirloom = repo.state.value?.gear?.firstOrNull()?.id } }, enabled = !busy && s.level == 18 && 6 in s.bosses) { Text("查看转世清单") }
                         }
                     }
@@ -216,7 +218,7 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
             val committed = repo.update {
                 require(it.level == expected.level && it.map == expected.map && it.practice == expected.practice &&
                     it.equipped == expected.equipped && it.gear == expected.gear && it.enhancements == expected.enhancements &&
-                    it.world == expected.world && it.heirloomId == expected.heirloomId) { "装备或属性已更新，请重新检查比较后确认" }
+                    it.world == expected.world && it.heirloomId == expected.heirloomId && it.manualLevels == expected.manualLevels) { "装备或属性已更新，请重新检查比较后确认" }
                 CultivationEngine.equip(it, gear.id)
             }
             if (committed != null) { feedback = comparison(committed.first, committed.second); equipPreview = null }
@@ -225,7 +227,7 @@ fun CultivationScreen(repo: CultivationRepository, onBack: () -> Unit) {
     rebirthPreview?.let { preview ->
         AlertDialog(onDismissRequest = { if (!busy) rebirthPreview = null }, title = { Text("转入第 ${preview.world + 1} 世") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("旧世历练已结清。保留 ${preview.stones / 10} 灵石；根骨再加 5%，悟性再加 10%。境界、${preview.cultivationTenths / 10} 修为、地图、所有强化及未选装备将重置。选择一件传承：")
+                Text("旧世历练已结清。保留 ${preview.stones / 10} 灵石；根骨再加 5%，悟性再加 10%。功法、等级、${preview.insight} 心得及功法保底全保留。境界、${xpText(preview.cultivationTenths)} 修为（含不足0.1余量）、不足1灵石余量、地图、所有强化及未选装备将重置。选择一件传承：")
                 preview.gear.forEach { g -> Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = selectedHeirloom == g.id, onClick = { selectedHeirloom = g.id })
                     Text("${g.name} · ${g.quality.label}装 · ${gearStats(g)}", color = qualityColor(g.quality))

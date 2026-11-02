@@ -45,7 +45,7 @@ class CultivationMigrationTest {
         game.refresh()
         var expected = old
         do { expected = CultivationEngine.catchUp(expected, now) } while (CultivationEngine.pending(expected, now) > 0)
-        expected = expected.copy(version = 2, report = expected.report.copy(battles = 43200, legacyMinutes = 43200))
+        expected = expected.copy(version = 3, report = expected.report.copy(battles = 43200, legacyMinutes = 43200, legacyCultivation = expected.report.cultivationTenths))
         assertEquals(expected, game.state.value)
         assertEquals(old, CultivationCodec.decode(backed!!))
         game.refresh()
@@ -63,7 +63,7 @@ class CultivationMigrationTest {
         assertEquals(raw, store.data.value[key])
         fail = false; game.refresh()
         assertEquals(1, game.state.value!!.report.wins)
-        assertEquals(2, game.state.value!!.version)
+        assertEquals(3, game.state.value!!.version)
     }
     @Test fun partiallyCompletedLegacyMigrationResumesFromDurableChunk() = runBlocking {
         val store = gameStore(CultivationState(version = 1, lastMillis = 0))
@@ -79,7 +79,7 @@ class CultivationMigrationTest {
         val resumed = repo(store, now = 3000 * 60_000L)
         resumed.refresh()
         assertEquals(3000, persisted(store).report.wins)
-        assertEquals(2, persisted(store).version)
+        assertEquals(3, persisted(store).version)
     }
     @Test fun committedMigrationWithLostAcknowledgementInvalidatesCacheAndNeverRepeatsIncome() = runBlocking {
         val store = gameStore(CultivationState(version = 1, lastMillis = 0))
@@ -93,7 +93,7 @@ class CultivationMigrationTest {
         val committed = persisted(store)
         store.after = null
         game.refresh()
-        assertEquals(committed, game.state.value)
+        assertEquals(committed.copy(version = 3, report = committed.report.copy(legacyCultivation = committed.report.cultivationTenths)), game.state.value)
         assertEquals(1, game.state.value!!.report.wins)
     }
     @Test fun committedThenCancelledUpdateIsRereadRatherThanOverwritten() = runBlocking {

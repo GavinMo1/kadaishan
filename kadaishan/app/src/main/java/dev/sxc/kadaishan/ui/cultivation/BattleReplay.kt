@@ -33,13 +33,17 @@ internal fun comparison(before: CultivationState, after: CultivationState): Stri
     val effect = when {
         !a.won && b.won -> "现在能击败本图普通妖兽"
         a.won && !b.won -> "注意：换后将无法击败本图普通妖兽"
+        a.cycleMillis == b.cycleMillis &&
+            (CultivationEngine.hourlyStones(before) != CultivationEngine.hourlyStones(after) ||
+                CultivationEngine.hourlyCultivationTenths(before) != CultivationEngine.hourlyCultivationTenths(after)) -> "战斗周期不变，修为或灵石收益已变化"
         a.cycleMillis == b.cycleMillis && a.won == b.won -> "本图效率暂未变化，可比较守关生存"
         b.cycleMillis < a.cycleMillis -> "击杀或休整更快，刷装效率提高"
         else -> "本图历练变慢，请确认取舍"
     }
     return "$effect\n回合 ${a.turns} → ${b.turns} · 战后生命 ${a.playerHp}/${a.maxHp} → ${b.playerHp}/${b.maxHp}" +
         "\n周期 ${seconds(a.cycleMillis)} → ${seconds(b.cycleMillis)} 秒" +
-        "\n预计灵石/小时 ${CultivationEngine.hourlyStones(before)} → ${CultivationEngine.hourlyStones(after)}"
+        "\n预计灵石/小时 ${CultivationEngine.hourlyStones(before)} → ${CultivationEngine.hourlyStones(after)}" +
+        "\n预计修为/小时 ${xpText(CultivationEngine.hourlyCultivationTenths(before))} → ${xpText(CultivationEngine.hourlyCultivationTenths(after))}"
 }
 
 /** A trace is a configuration demonstration, never a time source or an economic callback. */
@@ -86,15 +90,15 @@ internal fun BattleReplay(s: CultivationState, battle: Battle, boss: Boolean = f
             finished -> battleFailure(battle)
             record == null -> "双方满血 · 修士先手"
             phase == 0 -> "第 ${record.turn} 回合${if (record.healing > 0) " · 长生回复 +${record.healing}" else " · 准备出手"}"
-            phase == 1 -> "${if (record.burst) "御剑爆发" else "修士攻击"} −${record.damage}"
+            phase == 1 -> "${if (record.burst) "御剑爆发" else if (record.assault) "破军首击" else "修士攻击"} −${record.damage}"
             record.enemyAfter == 0L -> "妖兽已击败，不再反击"
-            else -> "妖兽反击 −${record.retaliation}"
+            else -> "妖兽反击 −${record.retaliation}${if (record.prevented > 0) " · 金身减伤 ${record.prevented}" else ""}"
         }, color = Daylight.ink, style = MaterialTheme.typography.bodyMedium)
         if (!boss && battle.won) Text("寻路 12 秒 + 战斗 ${battle.turns * 6} 秒 + 休整 ${seconds(battle.recoveryMillis)} 秒", color = Daylight.inkSub, style = MaterialTheme.typography.bodySmall)
         Text("收益按整分钟结算；观看或重播不会加速。", color = Daylight.inkSub, style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = { showTurns = !showTurns }) { Text(if (showTurns) "收起回合记录" else "查看回合记录") }
         if (showTurns) battle.trace.forEach { t ->
-            Text("第${t.turn}回合：回复 ${t.healing}，${if (t.burst) "御剑" else "攻击"} ${t.damage}，受伤 ${t.retaliation}；剩余 ${t.playerAfter}/${battle.maxHp}，妖兽 ${t.enemyAfter}/${battle.enemyMaxHp}",
+            Text("第${t.turn}回合：回复 ${t.healing}，${if (t.burst) "御剑" else if (t.assault) "破军" else "攻击"} ${t.damage}，受伤 ${t.retaliation}${if (t.prevented > 0) "（金身减伤${t.prevented}）" else ""}；剩余 ${t.playerAfter}/${battle.maxHp}，妖兽 ${t.enemyAfter}/${battle.enemyMaxHp}",
                 style = MaterialTheme.typography.bodySmall, color = Daylight.inkSub, modifier = Modifier.padding(vertical = 4.dp))
         }
     }

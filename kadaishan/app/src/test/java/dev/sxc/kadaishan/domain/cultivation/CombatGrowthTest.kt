@@ -6,7 +6,7 @@ import org.junit.Test
 import kotlin.random.Random
 
 class CombatGrowthTest {
-    private fun fresh() = CultivationState(lastMillis = 0, seed = 42)
+    private fun fresh() = CultivationState(version = 2, lastMillis = 0, seed = 42)
     private fun profile(attack: Long, health: Long, map: Int = 1, practice: Practice = Practice.SWORD) = fresh().copy(
         map = map, unlockedMap = map, practice = practice,
         gear = listOf(Gear(1, GearSlot.WEAPON, 1, Quality.WHITE, attack - 10), Gear(2, GearSlot.ROBE, 1, Quality.WHITE, (health - 80) / 8)),

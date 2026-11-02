@@ -24,7 +24,8 @@ class CultivationRepository internal constructor(
 ) {
     constructor(context: Context, clock: () -> Long = System::currentTimeMillis) : this(
         context.applicationContext.cultivationStore, CultivationRewardOutbox(context.applicationContext),
-        { raw -> CultivationBackup.preserve(File(context.filesDir, "cultivation-v1-backup.json"), raw) }, clock)
+        { raw -> CultivationBackup.preserve(File(context.filesDir,
+            "cultivation-v${CultivationCodec.decode(raw).version}-backup.json"), raw) }, clock)
     private val key = stringPreferencesKey("state_v1")
     private val mutex = Mutex()
     private var cache: CultivationState? = null
@@ -69,7 +70,7 @@ class CultivationRepository internal constructor(
         var current = load()
         val context = currentCoroutineContext()
         val now = clock().coerceAtLeast(0)
-        if (current.version == 1) backup(store.data.first()[key] ?: error("旧存档已不可读，停止升级"))
+        if (current.version < 3) backup(store.data.first()[key] ?: error("旧存档已不可读，停止升级"))
         do {
             context.ensureActive()
             val next = CultivationEngine.catchUp(current, now, checkActive = { context.ensureActive() })
@@ -80,6 +81,15 @@ class CultivationRepository internal constructor(
         if (current.version == 1) {
             current = current.copy(version = 2, battleCarryMillis = 0,
                 report = current.report.copy(battles = current.report.minutes, legacyMinutes = current.report.minutes))
+            save(current)
+        }
+        if (current.version == 2) {
+            backup(store.data.first()[key] ?: error("旧存档已不可读，停止升级"))
+            current = current.copy(version = 3,
+                manualLevels = mapOf(Practice.SWORD to 1, Practice.LIFE to 1), insight = 0, manualDryWins = 0,
+                baseRemainder = 0, killRemainder = 0, stoneRemainder = 0,
+                report = current.report.copy(legacyCultivation = current.report.cultivationTenths,
+                    baseCultivation = 0, killCultivation = 0, manualDrops = 0, insightDrops = 0, newManuals = emptySet()))
             save(current)
         }
         require(current.rewardGeneration == rewards.control().generation) { "修仙与补给代次不一致，原存档已保留" }
@@ -142,11 +152,12 @@ internal object CultivationBackup {
         if (file.exists()) {
             val saved = JSONObject(file.readText())
             val original = saved.getString("raw")
-            require(saved.getString("sha256") == checksum(original) && CultivationCodec.decode(original).version == 1) { "升级备份校验失败，请保留文件后重试" }
+            require(saved.getString("sha256") == checksum(original) &&
+                CultivationCodec.decode(original).version == CultivationCodec.decode(raw).version) { "升级备份校验失败，请保留文件后重试" }
             return
         }
         val temp = File(file.parentFile, file.name + ".tmp")
-        val envelope = JSONObject().put("schema", 1).put("createdAt", System.currentTimeMillis())
+        val envelope = JSONObject().put("schema", CultivationCodec.decode(raw).version).put("createdAt", System.currentTimeMillis())
             .put("raw", raw).put("sha256", checksum(raw)).toString()
         java.io.FileOutputStream(temp).use { out -> out.write(envelope.toByteArray(Charsets.UTF_8)); out.fd.sync() }
         java.nio.file.Files.move(temp.toPath(), file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
@@ -160,6 +171,11 @@ internal object CultivationCodec {
         put("level", s.level); put("xp", s.cultivationTenths); put("stones", s.stones)
         put("map", s.map); put("unlocked", s.unlockedMap); put("bosses", JSONArray(s.bosses.toList()))
         put("practice", s.practice.name)
+        if (s.version >= 3) {
+            put("manualLevels", JSONObject().apply { s.manualLevels.forEach { (p, n) -> put(p.name, n) } })
+            put("insight", s.insight); put("manualDryWins", s.manualDryWins)
+            put("baseRemainder", s.baseRemainder); put("killRemainder", s.killRemainder); put("stoneRemainder", s.stoneRemainder)
+        }
         put("enhancements", JSONObject().apply { s.enhancements.forEach { (k,v) -> put(k.name, v) } })
         put("equipped", JSONObject().apply { s.equipped.forEach { (k,v) -> put(k.name, v) } })
         put("gear", JSONArray().apply { s.gear.forEach { g -> put(JSONObject().apply {
@@ -173,19 +189,24 @@ internal object CultivationCodec {
             put("battles", s.report.battles); put("bonusMinutes", s.report.bonusMinutes); put("legacyMinutes", s.report.legacyMinutes)
             put("minutes", s.report.minutes); put("wins", s.report.wins); put("xp", s.report.cultivationTenths)
             put("stones", s.report.stones); put("drops", s.report.drops); put("dissolved", s.report.dissolved); put("best", s.report.bestQuality)
+            if (s.version >= 3) {
+                put("baseXp", s.report.baseCultivation); put("killXp", s.report.killCultivation); put("legacyXp", s.report.legacyCultivation)
+                put("manualDrops", s.report.manualDrops); put("insightDrops", s.report.insightDrops)
+                put("newManuals", JSONArray(s.report.newManuals.map { it.name }))
+            }
         })
     }.toString()
     fun decode(raw: String): CultivationState {
         val j = JSONObject(raw)
         val version = j.getInt("version")
-        require(version in 1..2) { "修仙存档版本不支持，请勿覆盖原存档" }
+        require(version in 1..3) { "修仙存档版本不支持，请勿覆盖原存档" }
         fun longs(name: String) = j.getJSONObject(name).let { obj -> obj.keys().asSequence().associate { GearSlot.valueOf(it) to obj.getLong(it) } }
         val gearArray = j.getJSONArray("gear")
         val r = j.getJSONObject("report")
         val s = CultivationState(
             version = version,
-            battleCarryMillis = if (version == 2) j.getLong("battleCarry") else 0,
-            rewardGeneration = if (version == 2) j.getLong("rewardGeneration") else 0,
+            battleCarryMillis = if (version >= 2) j.getLong("battleCarry") else 0,
+            rewardGeneration = if (version >= 2) j.getLong("rewardGeneration") else 0,
             enabled = j.getBoolean("enabled"), paused = j.getBoolean("paused"), level = j.getInt("level"),
             cultivationTenths = j.getLong("xp"), stones = j.getLong("stones"), map = j.getInt("map"), unlockedMap = j.getInt("unlocked"),
             bosses = j.getJSONArray("bosses").let { a -> (0 until a.length()).map { a.getInt(it) }.toSet() },
@@ -196,9 +217,23 @@ internal object CultivationCodec {
             seed = j.getLong("seed"), sequence = j.getLong("sequence"), dryWins = j.getInt("dry"), dullDrops = j.getInt("dull"),
             lastMillis = j.getLong("last"), carryMillis = j.getLong("carry"), giftMillis = if (j.isNull("gift")) null else j.getLong("gift"), consumedRound = j.getLong("consumed"),
             report = Earnings(r.getLong("minutes"), r.getLong("wins"), r.getLong("xp"), r.getLong("stones"), r.getLong("drops"), r.getLong("dissolved"), r.getInt("best"),
-                if (version == 2) r.getLong("battles") else 0,
-                if (version == 2) r.getLong("bonusMinutes") else 0,
-                if (version == 2) r.getLong("legacyMinutes") else 0),
+                if (version >= 2) r.getLong("battles") else 0,
+                if (version >= 2) r.getLong("bonusMinutes") else 0,
+                if (version >= 2) r.getLong("legacyMinutes") else 0,
+                if (version >= 3) r.getLong("baseXp") else 0,
+                if (version >= 3) r.getLong("killXp") else 0,
+                if (version >= 3) r.getLong("legacyXp") else 0,
+                if (version >= 3) r.getLong("manualDrops") else 0,
+                if (version >= 3) r.getLong("insightDrops") else 0,
+                if (version >= 3) r.getJSONArray("newManuals").let { a -> (0 until a.length()).map { Practice.valueOf(a.getString(it)) }.toSet() } else emptySet()),
+            manualLevels = if (version >= 3) j.getJSONObject("manualLevels").let { obj ->
+                obj.keys().asSequence().associate { Practice.valueOf(it) to obj.getInt(it) }
+            } else mapOf(Practice.SWORD to 1, Practice.LIFE to 1),
+            insight = if (version >= 3) j.getLong("insight") else 0,
+            manualDryWins = if (version >= 3) j.getInt("manualDryWins") else 0,
+            baseRemainder = if (version >= 3) j.getInt("baseRemainder") else 0,
+            killRemainder = if (version >= 3) j.getInt("killRemainder") else 0,
+            stoneRemainder = if (version >= 3) j.getInt("stoneRemainder") else 0,
         )
         require(s.level in 1..18 && s.map in 1..6 && s.unlockedMap in 1..6 && s.map <= s.unlockedMap)
         require(s.cultivationTenths >= 0 && s.stones >= 0 && s.lastMillis >= 0 && s.carryMillis in 0..59_999)
@@ -216,11 +251,23 @@ internal object CultivationCodec {
             parts.size == 3 && parts[0].toIntOrNull() in 1..6 && GearSlot.entries.any { it.name == parts[1] } && Quality.entries.any { it.name == parts[2] }
         })
         require(s.rewardGeneration >= 0 && s.battleCarryMillis >= 0)
-        if (version == 2) {
+        if (version >= 2) {
             require(s.battleCarryMillis < CultivationEngine.battle(s).cycleMillis)
             require(s.report.battles >= s.report.wins && s.report.bonusMinutes >= 0 && s.report.legacyMinutes >= 0)
             require(s.report.legacyMinutes <= s.report.minutes && s.report.bonusMinutes <= s.report.minutes - s.report.legacyMinutes)
         }
+        if (version >= 3) {
+            require(s.manualLevels.size in 2..6 && s.manualLevels.values.all { it in 1..20 })
+            require(CultivationProgression.rank(s, Practice.SWORD) > 0 && CultivationProgression.rank(s, Practice.LIFE) > 0 &&
+                CultivationProgression.rank(s, s.practice) > 0)
+            require(s.insight >= 0 && s.manualDryWins in 0..199)
+            require(s.baseRemainder in 0..499 && s.killRemainder in 0..499 && s.stoneRemainder in 0..99)
+            require(r.getLong("baseXp") >= 0 && r.getLong("killXp") >= 0 && r.getLong("legacyXp") >= 0)
+            require(s.report.cultivationTenths == CultivationEngine.add(
+                CultivationEngine.add(s.report.legacyCultivation, s.report.baseCultivation), s.report.killCultivation))
+            require(s.report.manualDrops >= 0 && s.report.insightDrops in 0..s.report.manualDrops)
+            require(s.report.newManuals.all { CultivationProgression.rank(s, it) > 0 })
+        } else require(s.practice == Practice.SWORD || s.practice == Practice.LIFE)
         return s
     }
 }

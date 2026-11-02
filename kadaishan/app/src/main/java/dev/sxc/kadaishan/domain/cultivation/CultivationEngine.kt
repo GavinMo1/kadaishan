@@ -8,7 +8,9 @@ enum class GearSlot(val label: String) { WEAPON("法器"), ROBE("法衣"), CHARM
 enum class Quality(val label: String, val tenths: Int) {
     WHITE("白", 10), BLUE("蓝", 14), PURPLE("紫", 20), ORANGE("橙", 28)
 }
-enum class Practice(val label: String) { SWORD("御剑诀"), LIFE("长生诀") }
+enum class Practice(val label: String) {
+    SWORD("御剑诀"), LIFE("长生诀"), ASSAULT("破军诀"), BODY("金身诀"), ORIGIN("归元诀"), WEALTH("聚灵诀")
+}
 data class Gear(val id: Long, val slot: GearSlot, val tier: Int, val quality: Quality, val strength: Long) {
     val name: String get() = listOf("竹", "青锋", "雾隐", "寒玉", "赤霞", "引雷")[tier - 1] +
         when (slot) { GearSlot.WEAPON -> "剑"; GearSlot.ROBE -> "衣"; GearSlot.CHARM -> "佩" }
@@ -16,7 +18,7 @@ data class Gear(val id: Long, val slot: GearSlot, val tier: Int, val quality: Qu
 enum class BattleEnd { KILL, DEAD, TIMEOUT }
 data class TurnRecord(val turn: Int, val beforeHealing: Long, val afterHealing: Long, val healing: Long,
     val damage: Long, val burst: Boolean, val enemyBefore: Long, val enemyAfter: Long,
-    val retaliation: Long, val playerAfter: Long)
+    val retaliation: Long, val playerAfter: Long, val assault: Boolean = false, val prevented: Long = 0)
 data class Battle(val won: Boolean, val turns: Int, val playerHp: Long, val enemyHp: Long,
     val maxHp: Long = 1, val enemyMaxHp: Long = 1, val end: BattleEnd = BattleEnd.TIMEOUT,
     val cycleMillis: Long = 60_000, val trace: List<TurnRecord> = emptyList(), val mapTier: Int = 1) {
@@ -27,9 +29,11 @@ data class Earnings(
     val minutes: Long = 0, val wins: Long = 0, val cultivationTenths: Long = 0,
     val stones: Long = 0, val drops: Long = 0, val dissolved: Long = 0,
     val bestQuality: Int = -1, val battles: Long = 0, val bonusMinutes: Long = 0, val legacyMinutes: Long = 0,
+    val baseCultivation: Long = 0, val killCultivation: Long = 0, val legacyCultivation: Long = 0,
+    val manualDrops: Long = 0, val insightDrops: Long = 0, val newManuals: Set<Practice> = emptySet(),
 )
 data class CultivationState(
-    val version: Int = 2, val enabled: Boolean = true, val paused: Boolean = false,
+    val version: Int = 3, val enabled: Boolean = true, val paused: Boolean = false,
     val level: Int = 1, val cultivationTenths: Long = 300, val stones: Long = 0,
     val map: Int = 1, val unlockedMap: Int = 1, val bosses: Set<Int> = emptySet(),
     val practice: Practice = Practice.SWORD, val enhancements: Map<GearSlot, Int> = emptyMap(),
@@ -41,6 +45,9 @@ data class CultivationState(
     val lastMillis: Long, val carryMillis: Long = 0,
     val giftMillis: Long? = null, val consumedRound: Long = 0,
     val report: Earnings = Earnings(), val battleCarryMillis: Long = 0, val rewardGeneration: Long = 0,
+    val manualLevels: Map<Practice, Int> = mapOf(Practice.SWORD to 1, Practice.LIFE to 1),
+    val insight: Long = 0, val manualDryWins: Int = 0,
+    val baseRemainder: Int = 0, val killRemainder: Int = 0, val stoneRemainder: Int = 0,
 )
 
 /** Pure deterministic rules. No media, Android, network, animation, or real-time work. */
@@ -90,16 +97,27 @@ object CultivationEngine {
         }
         for (turn in 1..5) {
             val beforeHealing = player
-            if (s.practice == Practice.LIFE) player = minOf(maxHp, add(player, maxOf(1, maxHp / 100 * 12 + maxHp % 100 * 12 / 100)))
+            val rank = if (s.version >= 3) CultivationProgression.rank(s, s.practice) else 1
+            if (s.practice == Practice.LIFE) player = minOf(maxHp, add(player,
+                maxOf(1, CultivationProgression.ratio(maxHp, (12L + rank - 1), 100))))
             val afterHealing = player
             val burst = s.practice == Practice.SWORD && turn % 3 == 0
-            val hit = minOf(enemy, if (burst) multiply(attack, 2) else attack)
+            val assault = s.version >= 3 && s.practice == Practice.ASSAULT && turn == 1
+            val damagePercent = when {
+                burst -> 200L + 5L * (rank - 1)
+                assault -> 150L + 5L * (rank - 1)
+                else -> 100L
+            }
+            val hit = minOf(enemy, CultivationProgression.ratio(attack, damagePercent, 100))
             val enemyBefore = enemy
             enemy -= hit
-            val taken = if (enemy == 0L) 0 else minOf(player, retaliation)
+            val defended = if (s.version >= 3 && s.practice == Practice.BODY)
+                maxOf(1, retaliation * (80L - (rank - 1)) / 100) else retaliation
+            val taken = if (enemy == 0L) 0 else minOf(player, defended)
             player -= taken
             trace?.add(TurnRecord(turn, beforeHealing, afterHealing, afterHealing - beforeHealing,
-                hit, burst, enemyBefore, enemy, taken, player))
+                hit, burst, enemyBefore, enemy, taken, player, assault,
+                if (enemy == 0L) 0 else retaliation - defended))
             if (enemy == 0L) return result(turn, BattleEnd.KILL)
             if (player == 0L) return result(turn, BattleEnd.DEAD)
         }
@@ -109,8 +127,14 @@ object CultivationEngine {
         val numerator = java.math.BigInteger.valueOf(a).multiply(java.math.BigInteger.valueOf(b))
         return numerator.add(java.math.BigInteger.valueOf(d - 1)).divide(java.math.BigInteger.valueOf(d)).toLong()
     }
-    fun hourlyCultivationTenths(s: CultivationState): Long = multiply(multiply(xp[s.map - 1], add(10, s.reincarnations)), 60)
-    fun hourlyStones(s: CultivationState): Long = multiply(battle(s).winsPerHour, coins[s.map - 1])
+    fun hourlyBaseCultivation(s: CultivationState): Long = if (s.version < 3)
+        multiply(multiply(xp[s.map - 1], add(10, s.reincarnations)), 60)
+        else CultivationProgression.income(s.copy(baseRemainder = 0, killRemainder = 0), 60, 0, xp[s.map - 1], coins[s.map - 1]).base
+    fun hourlyCultivationTenths(s: CultivationState): Long = if (s.version < 3) hourlyBaseCultivation(s)
+        else CultivationProgression.income(s.copy(baseRemainder = 0, killRemainder = 0), 60,
+            battle(s).winsPerHour, xp[s.map - 1], coins[s.map - 1]).let { add(it.base, it.kill) }
+    fun hourlyStones(s: CultivationState): Long = if (s.version < 3) multiply(battle(s).winsPerHour, coins[s.map - 1])
+        else CultivationProgression.income(s.copy(stoneRemainder = 0), 60, battle(s).winsPerHour, xp[s.map - 1], coins[s.map - 1]).stones
     /** Preserve fractional battle progress through a configuration change; never award a battle here. */
     fun transition(old: CultivationState, changed: CultivationState): CultivationState {
         if (old.version == 1) return changed
@@ -118,7 +142,7 @@ object CultivationEngine {
         val newCycle = battle(changed).cycleMillis
         return changed.copy(battleCarryMillis = old.battleCarryMillis * newCycle / oldCycle)
     }
-    private fun random(s: CultivationState, salt: Long, bound: Int): Int {
+    internal fun random(s: CultivationState, salt: Long, bound: Int): Int {
         var x = s.seed xor (s.sequence * -7046029254386353131L) xor salt
         x = (x xor (x ushr 30)) * -4658895280553007687L
         x = (x xor (x ushr 27)) * -7723592293110705685L
@@ -183,19 +207,32 @@ object CultivationEngine {
         val victory = profile.won
         val cultivation = multiply(multiply(minutes, xp[s.map - 1]), add(10, s.reincarnations))
         val income = if (victory) multiply(attempts, coins[s.map - 1]) else 0
+        val growth = if (s.version >= 3) CultivationProgression.income(s, minutes, if (victory) attempts else 0,
+            xp[s.map - 1], coins[s.map - 1]) else null
+        val earnedXp = growth?.let { add(it.base, it.kill) } ?: cultivation
+        val report = s.report.let { r -> if (growth == null) r.copy(cultivationTenths = add(r.cultivationTenths, earnedXp))
+            else {
+                val base = add(r.baseCultivation, growth.base); val kill = add(r.killCultivation, growth.kill)
+                r.copy(baseCultivation = base, killCultivation = kill,
+                    cultivationTenths = add(add(r.legacyCultivation, base), kill))
+            }
+        }
         val recordedMinutes = minOf(minutes, Long.MAX_VALUE - s.report.minutes)
-        var result = s.copy(cultivationTenths = add(s.cultivationTenths, cultivation), stones = add(s.stones, income),
-            battleCarryMillis = parts[1].toLong(), report = s.report.copy(
+        var result = s.copy(cultivationTenths = add(s.cultivationTenths, earnedXp), stones = add(s.stones, growth?.stones ?: income),
+            baseRemainder = growth?.baseRemainder ?: s.baseRemainder, killRemainder = growth?.killRemainder ?: s.killRemainder,
+            stoneRemainder = growth?.stoneRemainder ?: s.stoneRemainder,
+            battleCarryMillis = parts[1].toLong(), report = report.copy(
                 minutes = s.report.minutes + recordedMinutes,
                 bonusMinutes = s.report.bonusMinutes + if (bonus) recordedMinutes else 0,
                 battles = add(s.report.battles, attempts), wins = add(s.report.wins, if (victory) attempts else 0),
-                cultivationTenths = add(s.report.cultivationTenths, cultivation), stones = add(s.report.stones, income)))
+                stones = add(s.report.stones, growth?.stones ?: income)))
         var processed = 0L
         while (processed < attempts) {
             if (processed % 256 == 0L) checkActive()
             processed++
             result = result.copy(sequence = result.sequence + 1)
             if (victory) {
+                if (s.version >= 3) result = CultivationProgression.manualVictory(result)
                 if (random(result, 11, 100) < 5 || result.dryWins >= 19) {
                     val roll = random(result, 29, 100)
                     var quality = when { roll < 55 -> Quality.WHITE; roll < 90 -> Quality.BLUE; roll < 99 -> Quality.PURPLE; else -> Quality.ORANGE }
@@ -269,6 +306,7 @@ object CultivationEngine {
         val gear = if (chosen.slot == GearSlot.WEAPON) listOf(chosen) else listOf(chosen, Gear(-1, GearSlot.WEAPON, 1, Quality.WHITE, 4))
         return s.copy(level = 1, cultivationTenths = 0, stones = s.stones / 10, map = 1, unlockedMap = 1,
             bosses = emptySet(), enhancements = emptyMap(), gear = gear, equipped = gear.associate { it.slot to it.id },
-            heirloomId = chosen.id, reincarnations = add(s.reincarnations, 1), world = add(s.world, 1), report = Earnings())
+            heirloomId = chosen.id, reincarnations = add(s.reincarnations, 1), world = add(s.world, 1), report = Earnings(),
+            baseRemainder = 0, killRemainder = 0, stoneRemainder = 0)
     }
 }

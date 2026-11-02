@@ -7,7 +7,7 @@ import org.junit.Test
 class CultivationPacingTest {
     private data class Run(val minutes: Int, val checkpoints: List<Int>, val orangeDrops: Int, val fullUpgradeAt: Int?, val state: CultivationState)
     private fun play(seed: Long, cadence: Int, reincarnations: Long = 0, inherited: CultivationState? = null): Run {
-        var s = inherited ?: CultivationState(lastMillis = 0, seed = seed, reincarnations = reincarnations)
+        var s = inherited ?: CultivationState(version = 2, lastMillis = 0, seed = seed, reincarnations = reincarnations)
         val checkpoint = mutableListOf<Int>()
         var minute = 0
         var orange = 0
@@ -67,7 +67,7 @@ class CultivationPacingTest {
         }
     }
     @Test fun ordinaryCycleIsBoundedAndHigherMapsRetainMeaningfulIncome() {
-        val maxed = CultivationState(lastMillis = 0, level = 18, gear = emptyList())
+        val maxed = CultivationState(version = 2, lastMillis = 0, level = 18, gear = emptyList())
         val first = CultivationEngine.hourlyStones(maxed)
         val last = CultivationEngine.hourlyStones(maxed.copy(map = 6, gear = listOf(
             Gear(1, GearSlot.WEAPON, 6, Quality.PURPLE, 200), Gear(2, GearSlot.ROBE, 6, Quality.PURPLE, 200)),

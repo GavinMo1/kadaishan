@@ -3,12 +3,13 @@
 ## 项目定位与当前状态
 - 自用、单机、零联网 Android 相册清理 App；目标机 vivo S17 Pro（Android 15），不上架、不商业化。
 - 产品工程在 `kadaishan/`，module `:app`，包名 `dev.sxc.kadaishan`。
-- 修仙战斗成长改造已实现（属性影响周期、真实轨迹试演、schema2迁移及可靠补给）；用户早期反馈基本功能可用、画面简陋，新版原生截图与真机验收仍待完成；验证范围与待办统一见 [开发说明](docs/掌中修仙开发说明.md)。图片智能混排已实现（设置主动选择、下一轮生效），验证与待验收见 [实施说明](docs/图片智能混排实施说明.md)；不自行启动相似照片或视觉改版。
+- 修仙战斗成长改造已实现（属性影响周期、真实轨迹试演、schema3兼容迁移及可靠补给；六功法掉落培养、灵石炼化和击杀修为已实现）；用户早期反馈基本功能可用、画面简陋，新版原生截图与真机验收仍待完成；验证范围与待办统一见 [开发说明](docs/掌中修仙开发说明.md)。图片智能混排已实现（设置主动选择、下一轮生效），验证与待验收见 [实施说明](docs/图片智能混排实施说明.md)；不自行启动相似照片或视觉改版。
 - 修仙功能当前在 `codex/cultivation`，已推送但未合入 `main`。开工先查 `git status` 与分支，不从 `main` 误判功能缺失；不擅自合并或清理分支。
 
 ## 构建与安装
 - 统一门禁：`kadaishan\gradlew.bat -p kadaishan assembleDebug test --console=plain --no-daemon`。
 - APK：`kadaishan/app/build/outputs/apk/debug/app-debug.apk`。
+- 每次交付新版 APK 必须递增 `app/build.gradle.kts` 的 versionCode 并更新 versionName，核对成品包版本、签名和权限；设置页版本取 BuildConfig，不手写另一个版本源。游戏 schema 是独立存档格式，不代替应用版本号。
 - JDK 17、Android SDK 35；装机见 [开发环境安装](开发环境安装.md)。Gradle wrapper 锁腾讯镜像，Maven 依赖只走 `settings.gradle.kts` 中的阿里云镜像，禁止增加直连源。
 - vivo 禁 USB 安装通道：可 `adb push` APK 后在手机文件管理器覆盖安装；不默认执行 `adb install`。
 
